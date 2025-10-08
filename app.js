@@ -18,7 +18,7 @@ connectDB();
 const allowedOrigins = [
   "http://localhost:5173", // Local dev
   "https://delish-point-of-sale.vercel.app", // Vercel frontend
-  "https://point-of-sale.vercel.app", // Alternate domain (if used)
+  "https://point-of-sale.vercel.app",        // Alternate domain (if used)
 ];
 
 app.use(
@@ -40,12 +40,12 @@ app.use(
 app.options("*", cors());
 
 // Middleware
-app.use(express.json());
+app.use(express.json({ limit: "1mb" })); // Limit payload size
 app.use(cookieParser());
 
 // Root Endpoint
 app.get("/", (req, res) => {
-  res.json({ message: "Hello from POS Server!" });
+  res.status(200).json({ message: "Hello from POS Server!" });
 });
 
 // API Routes
