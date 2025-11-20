@@ -5,6 +5,9 @@ const globalErrorHandler = require("./middlewares/globalErrorHandler");
 const cookieParser = require("cookie-parser");
 const cors = require("cors");
 
+// Add this with your other route imports
+const inventoryRoutes = require("./routes/inventory");
+
 const app = express();
 const PORT = config.port;
 
@@ -36,6 +39,7 @@ app.use("/api/user", require("./routes/userRoute"));
 app.use("/api/order", require("./routes/orderRoute"));
 app.use("/api/table", require("./routes/tableRoute"));
 app.use("/api/payment", require("./routes/paymentRoute"));
+app.use("/api/inventory", require("./routes/inventory"));
 
 // Global Error Handler
 app.use(globalErrorHandler);
