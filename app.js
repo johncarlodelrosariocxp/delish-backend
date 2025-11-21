@@ -5,8 +5,12 @@ const globalErrorHandler = require("./middlewares/globalErrorHandler");
 const cookieParser = require("cookie-parser");
 const cors = require("cors");
 
-// Add this with your other route imports
+// Route imports
 const inventoryRoutes = require("./routes/inventory");
+const userRoutes = require("./routes/userRoute");
+const orderRoutes = require("./routes/orderRoute");
+const tableRoutes = require("./routes/tableRoute");
+const paymentRoutes = require("./routes/paymentRoute");
 
 const app = express();
 const PORT = config.port;
@@ -18,8 +22,9 @@ connectDB();
 app.use(
   cors({
     origin: [
-      "http://localhost:5173", // Local dev
-      "https://delish-point-of-sale.vercel.app", // Vercel frontend
+      "http://localhost:5173", // Local development
+      "https://delish-point-of-sale.vercel.app", // Old Vercel frontend
+      "https://delish-final-pos.vercel.app", // New Vercel frontend
     ],
     credentials: true,
   })
@@ -35,11 +40,11 @@ app.get("/", (req, res) => {
 });
 
 // API Routes
-app.use("/api/user", require("./routes/userRoute"));
-app.use("/api/order", require("./routes/orderRoute"));
-app.use("/api/table", require("./routes/tableRoute"));
-app.use("/api/payment", require("./routes/paymentRoute"));
-app.use("/api/inventory", require("./routes/inventory"));
+app.use("/api/user", userRoutes);
+app.use("/api/order", orderRoutes);
+app.use("/api/table", tableRoutes);
+app.use("/api/payment", paymentRoutes);
+app.use("/api/inventory", inventoryRoutes);
 
 // Global Error Handler
 app.use(globalErrorHandler);
