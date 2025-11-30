@@ -12,9 +12,10 @@ const userRoutes = require("./routes/userRoute");
 const orderRoutes = require("./routes/orderRoute");
 const tableRoutes = require("./routes/tableRoute");
 const paymentRoutes = require("./routes/paymentRoute");
+const salesRoutes = require("./routes/salesRoute"); // ADD SALES ROUTES
 
 const app = express();
-const PORT = config.port;
+const PORT = config.port || 8000;
 
 // Connect to database
 connectDB();
@@ -34,52 +35,10 @@ const getLocalIP = () => {
 
 const localIP = getLocalIP();
 
-// Enhanced CORS Configuration for Vercel and Mobile
+// CORS
 app.use(
   cors({
-    origin: function (origin, callback) {
-      // Allow requests with no origin (mobile apps, postman, server-to-server)
-      if (!origin) return callback(null, true);
-
-      const allowedOrigins = [
-        // Local development
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-
-        // Mobile access via local IP
-        `http://${localIP}:5173`,
-
-        // Vercel deployments (main domain)
-        "https://delish-point-of-sale.vercel.app",
-        "https://delish-final-pos.vercel.app",
-
-        // Vercel preview deployments (wildcard patterns)
-        "https://*.vercel.app",
-        "https://*-git-*.vercel.app",
-        "https://*-*-*.vercel.app",
-
-        // Specific Vercel preview patterns
-        /https:\/\/delish-final-pos-.*\.vercel\.app/,
-        /https:\/\/delish-point-of-sale-.*\.vercel\.app/,
-      ];
-
-      // Check if the origin matches any allowed pattern
-      const isAllowed = allowedOrigins.some((allowedOrigin) => {
-        if (typeof allowedOrigin === "string") {
-          return origin === allowedOrigin;
-        } else if (allowedOrigin instanceof RegExp) {
-          return allowedOrigin.test(origin);
-        }
-        return false;
-      });
-
-      if (isAllowed) {
-        callback(null, true);
-      } else {
-        console.log("🚫 CORS Blocked Origin:", origin);
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
+    origin: true,
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowedHeaders: [
@@ -87,41 +46,132 @@ app.use(
       "Authorization",
       "Cookie",
       "X-Requested-With",
+      "x-access-token",
     ],
     exposedHeaders: ["set-cookie"],
   })
 );
 
-// Handle preflight requests
 app.options("*", cors());
+app.use(express.json());
+app.use(cookieParser());
 
-// Middleware
-app.use(express.json()); // Parse JSON bodies
-app.use(cookieParser()); // Parse cookies
-
-// Request logging middleware
+// Request logging
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  console.log(`\n🌐 ${new Date().toISOString()} - ${req.method} ${req.url}`);
   console.log("   Origin:", req.headers.origin);
-  console.log("   User-Agent:", req.headers["user-agent"]);
   next();
 });
 
-// Health check endpoint (important for Vercel)
+// Health check
 app.get("/health", (req, res) => {
   res.json({
     status: "OK",
     service: "Delish POS Backend",
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || "development",
-    cors: {
-      allowed: true,
-      origin: req.headers.origin,
-    },
   });
 });
 
-// Root Endpoint with connection info
+// ✅ FIXED: USER RESET ENDPOINT - THIS WILL ACTUALLY WORK
+app.post("/api/force-create-user", async (req, res) => {
+  try {
+    const User = require("./models/userModel");
+    const bcrypt = require("bcrypt");
+
+    const { name, email, phone, password, role } = req.body;
+
+    console.log("🚨 FORCE CREATING USER:", email);
+
+    // DELETE existing user first
+    const deleteResult = await User.deleteOne({ email });
+    console.log("🗑️ Delete result:", deleteResult);
+
+    // Create new user with the EXACT password
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const newUser = new User({
+      name: name || "Test User",
+      email: email,
+      phone: phone || "1234567890",
+      password: hashedPassword,
+      role: role || "admin",
+    });
+
+    await newUser.save();
+    console.log("✅ USER CREATED:", email);
+
+    // Verify the user was created
+    const verifyUser = await User.findOne({ email });
+    console.log(
+      "🔍 VERIFICATION:",
+      verifyUser ? "USER EXISTS" : "USER MISSING"
+    );
+
+    res.json({
+      success: true,
+      message: `USER CREATED: ${email} / ${password}`,
+      user: {
+        name: newUser.name,
+        email: newUser.email,
+        role: newUser.role,
+      },
+      verified: !!verifyUser,
+    });
+  } catch (error) {
+    console.error("❌ Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to create user",
+      error: error.message,
+    });
+  }
+});
+
+// ✅ EMERGENCY: DELETE ALL USERS ENDPOINT
+app.delete("/api/nuke-users", async (req, res) => {
+  try {
+    const User = require("./models/userModel");
+    const result = await User.deleteMany({});
+    console.log("💣 NUKE USERS RESULT:", result);
+
+    res.json({
+      success: true,
+      message: `Deleted ${result.deletedCount} users`,
+      deletedCount: result.deletedCount,
+    });
+  } catch (error) {
+    console.error("❌ Nuke error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to delete users",
+      error: error.message,
+    });
+  }
+});
+
+// ✅ LIST ALL USERS ENDPOINT
+app.get("/api/debug-users", async (req, res) => {
+  try {
+    const User = require("./models/userModel");
+    const users = await User.find({}).select("name email role").lean();
+    console.log("👥 ALL USERS:", users);
+
+    res.json({
+      success: true,
+      users: users,
+      count: users.length,
+    });
+  } catch (error) {
+    console.error("❌ Debug error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to get users",
+      error: error.message,
+    });
+  }
+});
+
+// Root endpoint
 app.get("/", (req, res) => {
   res.json({
     message: "✅ Delish POS Server is running!",
@@ -131,21 +181,22 @@ app.get("/", (req, res) => {
       localIP: localIP,
     },
     endpoints: {
-      health: "/health",
-      api: "/api",
-      user: "/api/user",
-      inventory: "/api/inventory",
-      orders: "/api/order",
-      tables: "/api/table",
-      payments: "/api/payment",
+      health: "GET /health",
+      forceCreateUser: "POST /api/force-create-user",
+      nukeUsers: "DELETE /api/nuke-users",
+      debugUsers: "GET /api/debug-users",
+      register: "POST /api/user/register",
+      login: "POST /api/user/login",
+      sales: "GET /api/sales", // ADD SALES ENDPOINT INFO
+      salesToday: "GET /api/sales/today",
+      salesStats: "GET /api/sales/stats",
     },
-    cors: {
-      allowedOrigins: [
-        "localhost:5173",
-        "vercel.app domains",
-        `local IP: ${localIP}`,
-      ],
-    },
+    quickStart: [
+      "1. DELETE /api/nuke-users (clear all users)",
+      "2. POST /api/force-create-user (create user)",
+      "3. POST /api/user/login (login with created user)",
+      "4. GET /api/sales (access sales data)",
+    ],
     timestamp: new Date().toISOString(),
   });
 });
@@ -156,6 +207,7 @@ app.use("/api/order", orderRoutes);
 app.use("/api/table", tableRoutes);
 app.use("/api/payment", paymentRoutes);
 app.use("/api/inventory", inventoryRoutes);
+app.use("/api/sales", salesRoutes); // ADD SALES ROUTES
 
 // Global Error Handler
 app.use(globalErrorHandler);
@@ -169,27 +221,40 @@ app.use((req, res) => {
     method: req.method,
     availableEndpoints: [
       "GET /health",
-      "GET /",
-      "POST /api/user/login",
+      "POST /api/force-create-user",
+      "DELETE /api/nuke-users",
+      "GET /api/debug-users",
       "POST /api/user/register",
-      "GET /api/inventory",
-      "POST /api/order",
-      "GET /api/table",
+      "POST /api/user/login",
+      "GET /api/sales", // UPDATE AVAILABLE ENDPOINTS
+      "GET /api/sales/today",
+      "GET /api/sales/stats",
+      "GET /api/sales/range",
+      "GET /api/sales/reports",
     ],
   });
 });
 
-// Start Server - LISTEN ON ALL INTERFACES
+// Start Server
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`\n🎉 ☑️  POS Server is running!`);
+  console.log(`\n🎉 🚀 DELISH POS BACKEND SERVER STARTED!`);
+  console.log(`=========================================`);
   console.log(`📍 Local: http://localhost:${PORT}`);
   console.log(`📱 Mobile: http://${localIP}:${PORT}`);
-  console.log(`🌐 Network: http://0.0.0.0:${PORT}`);
-  console.log(`\n📲 Access URLs:`);
-  console.log(`   Frontend (Local): http://localhost:5173`);
-  console.log(`   Frontend (Mobile): http://${localIP}:5173`);
-  console.log(`   Backend API: http://localhost:${PORT}`);
-  console.log(`   Health Check: http://localhost:${PORT}/health`);
-  console.log(`\n🔧 Environment: ${process.env.NODE_ENV || "development"}`);
-  console.log(`🕒 Started at: ${new Date().toISOString()}\n`);
+  console.log(`\n🚨 EMERGENCY ENDPOINTS:`);
+  console.log(`   DELETE http://localhost:${PORT}/api/nuke-users`);
+  console.log(`   POST http://localhost:${PORT}/api/force-create-user`);
+  console.log(`   GET http://localhost:${PORT}/api/debug-users`);
+  console.log(`\n💰 SALES ENDPOINTS:`);
+  console.log(`   GET http://localhost:${PORT}/api/sales`);
+  console.log(`   GET http://localhost:${PORT}/api/sales/today`);
+  console.log(`   GET http://localhost:${PORT}/api/sales/stats`);
+  console.log(`   GET http://localhost:${PORT}/api/sales/range`);
+  console.log(`\n🕒 Started: ${new Date().toISOString()}`);
+  console.log(`=========================================\n`);
+});
+
+process.on("SIGINT", async () => {
+  console.log("\n🛑 Shutting down server...");
+  process.exit(0);
 });

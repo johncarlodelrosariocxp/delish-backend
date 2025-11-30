@@ -1,14 +1,27 @@
 const express = require("express");
-const { register, login, getUserData, logout } = require("../controllers/userController");
+const {
+  register,
+  login,
+  getUserData,
+  logout,
+  getUserDashboardStats,
+  getAdminDashboardStats,
+  debugUser, // ADD THIS
+} = require("../controllers/userController");
 const { isVerifiedUser } = require("../middlewares/tokenVerification");
 const router = express.Router();
 
+// 👥 AUTH ROUTES
+router.post("/register", register);
+router.post("/login", login);
+router.post("/logout", isVerifiedUser, logout);
+router.post("/debug-user", debugUser); // ADD THIS LINE
 
-// Authentication Routes
-router.route("/register").post(register);
-router.route("/login").post(login);
-router.route("/logout").post(isVerifiedUser, logout)
+// 👤 USER ROUTES
+router.get("/me", isVerifiedUser, getUserData);
+router.get("/dashboard/stats", isVerifiedUser, getUserDashboardStats);
 
-router.route("/").get(isVerifiedUser , getUserData);
+// 🔐 ADMIN ROUTES
+router.get("/admin/dashboard/stats", isVerifiedUser, getAdminDashboardStats);
 
 module.exports = router;
