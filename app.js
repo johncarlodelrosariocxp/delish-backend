@@ -12,7 +12,7 @@ const userRoutes = require("./routes/userRoute");
 const orderRoutes = require("./routes/orderRoute");
 const tableRoutes = require("./routes/tableRoute");
 const paymentRoutes = require("./routes/paymentRoute");
-const salesRoutes = require("./routes/salesRoute"); // ADD SALES ROUTES
+const salesRoutes = require("./routes/salesRoute");
 
 const app = express();
 const PORT = config.port || 8000;
@@ -35,10 +35,16 @@ const getLocalIP = () => {
 
 const localIP = getLocalIP();
 
-// CORS
+// Enhanced CORS configuration
 app.use(
   cors({
-    origin: true,
+    origin: [
+      "http://localhost:3000",
+      "http://localhost:5173",
+      "https://delish-point-of-sale.vercel.app",
+      "https://delish-final-pos.vercel.app",
+      "https://delish-pos.vercel.app",
+    ],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowedHeaders: [
@@ -47,33 +53,41 @@ app.use(
       "Cookie",
       "X-Requested-With",
       "x-access-token",
+      "Accept",
     ],
     exposedHeaders: ["set-cookie"],
   })
 );
 
+// Pre-flight requests
 app.options("*", cors());
-app.use(express.json());
+
+// Body parsing middleware
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 
-// Request logging
+// Request logging middleware
 app.use((req, res, next) => {
   console.log(`\n🌐 ${new Date().toISOString()} - ${req.method} ${req.url}`);
   console.log("   Origin:", req.headers.origin);
+  console.log("   User-Agent:", req.headers["user-agent"]);
   next();
 });
 
-// Health check
+// Health check endpoint
 app.get("/health", (req, res) => {
   res.json({
     status: "OK",
     service: "Delish POS Backend",
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || "development",
+    database: "Connected",
+    version: "1.0.0",
   });
 });
 
-// ✅ FIXED: USER RESET ENDPOINT - THIS WILL ACTUALLY WORK
+// Enhanced user management endpoints
 app.post("/api/force-create-user", async (req, res) => {
   try {
     const User = require("./models/userModel");
@@ -83,14 +97,13 @@ app.post("/api/force-create-user", async (req, res) => {
 
     console.log("🚨 FORCE CREATING USER:", email);
 
-    // DELETE existing user first
-    const deleteResult = await User.deleteOne({ email });
-    console.log("🗑️ Delete result:", deleteResult);
+    // Delete existing user first
+    await User.deleteOne({ email });
 
-    // Create new user with the EXACT password
+    // Create new user
     const hashedPassword = await bcrypt.hash(password, 10);
     const newUser = new User({
-      name: name || "Test User",
+      name: name || "Admin User",
       email: email,
       phone: phone || "1234567890",
       password: hashedPassword,
@@ -100,16 +113,12 @@ app.post("/api/force-create-user", async (req, res) => {
     await newUser.save();
     console.log("✅ USER CREATED:", email);
 
-    // Verify the user was created
+    // Verify creation
     const verifyUser = await User.findOne({ email });
-    console.log(
-      "🔍 VERIFICATION:",
-      verifyUser ? "USER EXISTS" : "USER MISSING"
-    );
 
     res.json({
       success: true,
-      message: `USER CREATED: ${email} / ${password}`,
+      message: `User created successfully: ${email}`,
       user: {
         name: newUser.name,
         email: newUser.email,
@@ -118,7 +127,7 @@ app.post("/api/force-create-user", async (req, res) => {
       verified: !!verifyUser,
     });
   } catch (error) {
-    console.error("❌ Error:", error);
+    console.error("❌ Error creating user:", error);
     res.status(500).json({
       success: false,
       message: "Failed to create user",
@@ -127,12 +136,10 @@ app.post("/api/force-create-user", async (req, res) => {
   }
 });
 
-// ✅ EMERGENCY: DELETE ALL USERS ENDPOINT
 app.delete("/api/nuke-users", async (req, res) => {
   try {
     const User = require("./models/userModel");
     const result = await User.deleteMany({});
-    console.log("💣 NUKE USERS RESULT:", result);
 
     res.json({
       success: true,
@@ -140,7 +147,7 @@ app.delete("/api/nuke-users", async (req, res) => {
       deletedCount: result.deletedCount,
     });
   } catch (error) {
-    console.error("❌ Nuke error:", error);
+    console.error("❌ Error deleting users:", error);
     res.status(500).json({
       success: false,
       message: "Failed to delete users",
@@ -149,12 +156,12 @@ app.delete("/api/nuke-users", async (req, res) => {
   }
 });
 
-// ✅ LIST ALL USERS ENDPOINT
 app.get("/api/debug-users", async (req, res) => {
   try {
     const User = require("./models/userModel");
-    const users = await User.find({}).select("name email role").lean();
-    console.log("👥 ALL USERS:", users);
+    const users = await User.find({})
+      .select("name email role createdAt")
+      .lean();
 
     res.json({
       success: true,
@@ -162,7 +169,7 @@ app.get("/api/debug-users", async (req, res) => {
       count: users.length,
     });
   } catch (error) {
-    console.error("❌ Debug error:", error);
+    console.error("❌ Error fetching users:", error);
     res.status(500).json({
       success: false,
       message: "Failed to get users",
@@ -171,7 +178,7 @@ app.get("/api/debug-users", async (req, res) => {
   }
 });
 
-// Root endpoint
+// Root endpoint with complete API documentation
 app.get("/", (req, res) => {
   res.json({
     message: "✅ Delish POS Server is running!",
@@ -179,23 +186,61 @@ app.get("/", (req, res) => {
       port: PORT,
       environment: process.env.NODE_ENV || "development",
       localIP: localIP,
+      baseURL: `http://${req.headers.host}`,
     },
     endpoints: {
       health: "GET /health",
-      forceCreateUser: "POST /api/force-create-user",
-      nukeUsers: "DELETE /api/nuke-users",
-      debugUsers: "GET /api/debug-users",
-      register: "POST /api/user/register",
-      login: "POST /api/user/login",
-      sales: "GET /api/sales", // ADD SALES ENDPOINT INFO
-      salesToday: "GET /api/sales/today",
-      salesStats: "GET /api/sales/stats",
+      auth: {
+        register: "POST /api/user/register",
+        login: "POST /api/user/login",
+        logout: "POST /api/user/logout",
+        profile: "GET /api/user/me",
+      },
+      sales: {
+        all: "GET /api/sales",
+        today: "GET /api/sales/today",
+        stats: "GET /api/sales/stats",
+        range: "GET /api/sales/range",
+        reports: "GET /api/sales/reports",
+      },
+      orders: {
+        create: "POST /api/order",
+        list: "GET /api/order",
+        single: "GET /api/order/:id",
+        update: "PUT /api/order/:id",
+        delete: "DELETE /api/order/:id",
+        stats: "GET /api/order/stats",
+      },
+      tables: {
+        create: "POST /api/table",
+        list: "GET /api/table",
+        update: "PUT /api/table/:id",
+      },
+      payments: {
+        create: "POST /api/payment/create-order",
+        verify: "POST /api/payment/verify-payment",
+        list: "GET /api/payment",
+        stats: "GET /api/payment/stats",
+      },
+      inventory: {
+        list: "GET /api/inventory",
+        create: "POST /api/inventory",
+        update: "PUT /api/inventory/:id",
+        delete: "DELETE /api/inventory/:id",
+        lowStock: "GET /api/inventory/low-stock",
+      },
+      admin: {
+        emergency: {
+          createUser: "POST /api/force-create-user",
+          deleteUsers: "DELETE /api/nuke-users",
+          listUsers: "GET /api/debug-users",
+        },
+      },
     },
     quickStart: [
-      "1. DELETE /api/nuke-users (clear all users)",
-      "2. POST /api/force-create-user (create user)",
-      "3. POST /api/user/login (login with created user)",
-      "4. GET /api/sales (access sales data)",
+      "1. POST /api/force-create-user (create admin user)",
+      "2. POST /api/user/login (login with credentials)",
+      "3. Access protected endpoints with returned token",
     ],
     timestamp: new Date().toISOString(),
   });
@@ -207,7 +252,7 @@ app.use("/api/order", orderRoutes);
 app.use("/api/table", tableRoutes);
 app.use("/api/payment", paymentRoutes);
 app.use("/api/inventory", inventoryRoutes);
-app.use("/api/sales", salesRoutes); // ADD SALES ROUTES
+app.use("/api/sales", salesRoutes);
 
 // Global Error Handler
 app.use(globalErrorHandler);
@@ -221,16 +266,14 @@ app.use((req, res) => {
     method: req.method,
     availableEndpoints: [
       "GET /health",
-      "POST /api/force-create-user",
-      "DELETE /api/nuke-users",
-      "GET /api/debug-users",
       "POST /api/user/register",
       "POST /api/user/login",
-      "GET /api/sales", // UPDATE AVAILABLE ENDPOINTS
+      "GET /api/sales",
       "GET /api/sales/today",
       "GET /api/sales/stats",
-      "GET /api/sales/range",
-      "GET /api/sales/reports",
+      "POST /api/order",
+      "GET /api/order",
+      "GET /api/inventory",
     ],
   });
 });
@@ -240,21 +283,15 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`\n🎉 🚀 DELISH POS BACKEND SERVER STARTED!`);
   console.log(`=========================================`);
   console.log(`📍 Local: http://localhost:${PORT}`);
-  console.log(`📱 Mobile: http://${localIP}:${PORT}`);
-  console.log(`\n🚨 EMERGENCY ENDPOINTS:`);
-  console.log(`   DELETE http://localhost:${PORT}/api/nuke-users`);
-  console.log(`   POST http://localhost:${PORT}/api/force-create-user`);
-  console.log(`   GET http://localhost:${PORT}/api/debug-users`);
-  console.log(`\n💰 SALES ENDPOINTS:`);
-  console.log(`   GET http://localhost:${PORT}/api/sales`);
-  console.log(`   GET http://localhost:${PORT}/api/sales/today`);
-  console.log(`   GET http://localhost:${PORT}/api/sales/stats`);
-  console.log(`   GET http://localhost:${PORT}/api/sales/range`);
-  console.log(`\n🕒 Started: ${new Date().toISOString()}`);
+  console.log(`📱 Network: http://${localIP}:${PORT}`);
+  console.log(`🌐 Production: https://delish-backend-1.onrender.com`);
+  console.log(`\n🔧 Environment: ${process.env.NODE_ENV || "development"}`);
+  console.log(`🕒 Started: ${new Date().toISOString()}`);
   console.log(`=========================================\n`);
 });
 
+// Graceful shutdown
 process.on("SIGINT", async () => {
-  console.log("\n🛑 Shutting down server...");
+  console.log("\n🛑 Shutting down server gracefully...");
   process.exit(0);
 });
