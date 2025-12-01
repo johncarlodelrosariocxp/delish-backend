@@ -4,7 +4,6 @@ const config = require("./config/config");
 const globalErrorHandler = require("./middlewares/globalErrorHandler");
 const cookieParser = require("cookie-parser");
 const cors = require("cors");
-const os = require("os");
 
 // Route imports
 const inventoryRoutes = require("./routes/inventory");
@@ -15,36 +14,32 @@ const paymentRoutes = require("./routes/paymentRoute");
 const salesRoutes = require("./routes/salesRoute");
 
 const app = express();
-const PORT = config.port || 8000;
+const PORT = process.env.PORT || 8000;
 
 // Connect to database
 connectDB();
 
-// Get local IP for mobile access
-const getLocalIP = () => {
-  const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    for (const interface of interfaces[name]) {
-      if (interface.family === "IPv4" && !interface.internal) {
-        return interface.address;
-      }
-    }
-  }
-  return "localhost";
-};
+// Enhanced CORS configuration for production
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "https://delish-final-pos.vercel.app",
+  "https://final-delish-pos.vercel.app",
+];
 
-const localIP = getLocalIP();
-
-// Enhanced CORS configuration
 app.use(
   cors({
-    origin: [
-      "http://localhost:3000",
-      "http://localhost:5173",
-      "https://delish-point-of-sale.vercel.app",
-      "https://delish-final-pos.vercel.app",
-      "https://delish-pos.vercel.app",
-    ],
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.indexOf(origin) !== -1) {
+        callback(null, true);
+      } else {
+        console.log(`🔒 CORS blocked origin: ${origin}`);
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowedHeaders: [
@@ -185,8 +180,7 @@ app.get("/", (req, res) => {
     server: {
       port: PORT,
       environment: process.env.NODE_ENV || "development",
-      localIP: localIP,
-      baseURL: `http://${req.headers.host}`,
+      baseURL: `https://${req.headers.host}`,
     },
     endpoints: {
       health: "GET /health",
@@ -279,13 +273,11 @@ app.use((req, res) => {
 });
 
 // Start Server
-app.listen(PORT, "0.0.0.0", () => {
+const server = app.listen(PORT, () => {
   console.log(`\n🎉 🚀 DELISH POS BACKEND SERVER STARTED!`);
   console.log(`=========================================`);
-  console.log(`📍 Local: http://localhost:${PORT}`);
-  console.log(`📱 Network: http://${localIP}:${PORT}`);
-  console.log(`🌐 Production: https://delish-backend-1.onrender.com`);
-  console.log(`\n🔧 Environment: ${process.env.NODE_ENV || "development"}`);
+  console.log(`📍 Port: ${PORT}`);
+  console.log(`🌐 Environment: ${process.env.NODE_ENV || "development"}`);
   console.log(`🕒 Started: ${new Date().toISOString()}`);
   console.log(`=========================================\n`);
 });
@@ -293,5 +285,16 @@ app.listen(PORT, "0.0.0.0", () => {
 // Graceful shutdown
 process.on("SIGINT", async () => {
   console.log("\n🛑 Shutting down server gracefully...");
-  process.exit(0);
+  server.close(() => {
+    console.log("✅ Server closed");
+    process.exit(0);
+  });
+});
+
+process.on("SIGTERM", async () => {
+  console.log("\n🛑 SIGTERM received, shutting down gracefully...");
+  server.close(() => {
+    console.log("✅ Server closed");
+    process.exit(0);
+  });
 });
