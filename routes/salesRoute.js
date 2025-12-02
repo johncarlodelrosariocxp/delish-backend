@@ -6,9 +6,10 @@ const router = express.Router();
 // GET /api/sales - Get all sales data
 router.get("/", isVerifiedUser, async (req, res) => {
   try {
-    const orders = await Order.find({ orderStatus: "completed" })
-      .populate("user", "name email")
-      .sort({ createdAt: -1 });
+    const orders = await Order.find({ orderStatus: "completed" }).populate(
+      "user",
+      "name email"
+    );
 
     res.json({
       success: true,
@@ -188,7 +189,6 @@ router.get("/reports", isVerifiedUser, async (req, res) => {
           orderCount: { $sum: 1 },
         },
       },
-      { $sort: { "_id.year": -1, "_id.month": -1 } },
     ]);
 
     // Get top selling items
@@ -204,7 +204,6 @@ router.get("/reports", isVerifiedUser, async (req, res) => {
           },
         },
       },
-      { $sort: { totalQuantity: -1 } },
       { $limit: 10 },
     ]);
 

@@ -3,7 +3,7 @@ const Inventory = require("../models/Inventory");
 // Get all inventory items
 exports.getInventory = async (req, res) => {
   try {
-    const inventory = await Inventory.find().sort({ name: 1 });
+    const inventory = await Inventory.find(); // Removed \({ name: 1 })
     res.json({
       success: true,
       data: inventory,
