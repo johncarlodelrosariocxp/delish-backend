@@ -32,51 +32,87 @@ axiosWrapper.interceptors.request.use(
       config.headers.Authorization = `Bearer ${token}`;
     }
 
-    // Add Vercel-specific headers
+    // Add Vercel-specific headers for better CORS handling
     if (IS_VERCEL) {
-      config.headers["X-Vercel-Forwarded-For"] = FRONTEND_URL;
+      config.headers["Origin"] = FRONTEND_URL;
+      config.headers["Referer"] = FRONTEND_URL;
+      config.headers["X-Forwarded-Host"] = FRONTEND_URL;
     }
 
+    console.log(
+      `📤 API Request: ${config.method?.toUpperCase()} ${config.url}`
+    );
     return config;
   },
-  (error) => Promise.reject(error)
+  (error) => {
+    console.error("❌ Request Error:", error);
+    return Promise.reject(error);
+  }
 );
 
 // Response interceptor with Vercel-specific handling
 axiosWrapper.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    console.log(`✅ API Response [${response.status}]: ${response.config.url}`);
+
+    // Auto-save token from login/signup responses
+    if (
+      response.data &&
+      (response.config.url.includes("/login") ||
+        response.config.url.includes("/register") ||
+        response.config.url.includes("/force-create-user"))
+    ) {
+      const token = response.data.token || response.data.data?.token;
+      if (token) {
+        localStorage.setItem("authToken", token);
+        console.log("🔑 Token saved to localStorage");
+      }
+    }
+
+    return response;
+  },
   (error) => {
     const status = error.response?.status;
     const url = error.config?.url;
+    const message = error.message;
 
-    console.error(`❌ API Error [${status}]:`, error.message);
+    console.error(`❌ API Error [${status}]:`, message);
     console.error("Frontend (Vercel):", FRONTEND_URL);
     console.error("Backend (Render):", API_BASE_URL);
     console.error("Endpoint:", url);
 
     // Handle CORS errors
-    if (error.message.includes("CORS") || error.code === "ERR_NETWORK") {
+    if (
+      error.message.includes("CORS") ||
+      error.code === "ERR_NETWORK" ||
+      error.code === "ECONNREFUSED"
+    ) {
       error.userMessage = `
 🚨 CORS BLOCKED - Vercel cannot access Render
 
-Your frontend: ${FRONTEND_URL}
-Backend: ${API_BASE_URL}
+Your Vercel Frontend: ${FRONTEND_URL}
+Render Backend: ${API_BASE_URL}
 
 REQUIRED FIX:
 1. Update backend CORS to include: "${FRONTEND_URL}"
-2. Or allow all Vercel domains: "https://*.vercel.app"
+2. Or allow all origins temporarily: "*"
+3. Make sure backend is awake (Render free tier sleeps)
 
-EMERGENCY WORKAROUND:
-Run this in browser console to test connection:
+TEST CONNECTION:
+// Run in browser console
+fetch("${API_BASE_URL}", {
+  mode: 'cors',
+  headers: { 'Accept': 'application/json' }
+})
+.then(r => console.log("Status:", r.status, r.statusText))
+.then(r => r.text())
+.then(d => console.log("Response:", d))
+.catch(e => console.error("Error:", e));
 
-// Test CORS
-fetch("${API_BASE_URL}")
-  .then(r => console.log("Status:", r.status))
-  .catch(e => console.error("Error:", e));
-
-// Create emergency user
+// Create emergency user with CORS mode
 fetch("${API_BASE_URL}/api/force-create-user", {
   method: 'POST',
+  mode: 'cors',
   headers: {'Content-Type':'application/json'},
   body: JSON.stringify({
     name: "Admin",
@@ -93,10 +129,26 @@ fetch("${API_BASE_URL}/api/force-create-user", {
       // Show alert on login page
       if (window.location.pathname.includes("/login")) {
         setTimeout(() => {
-          alert(
-            `CORS Issue Detected!\n\nFrontend: ${FRONTEND_URL}\nBackend: ${API_BASE_URL}\n\nUpdate backend CORS configuration.`
-          );
+          const alertMsg = `CORS Issue Detected!\n\nVercel Frontend: ${FRONTEND_URL}\nRender Backend: ${API_BASE_URL}\n\n1. Check if backend is awake\n2. Update backend CORS to allow: ${FRONTEND_URL}\n3. Check browser console for details`;
+          console.warn(alertMsg);
+          alert(alertMsg);
         }, 2000);
+      }
+    }
+
+    // Clear token on 401 Unauthorized
+    if (status === 401) {
+      localStorage.removeItem("authToken");
+      console.log("🔓 Token cleared due to 401 Unauthorized");
+
+      // Redirect to login if not already there
+      if (
+        !window.location.pathname.includes("/login") &&
+        !window.location.pathname.includes("/register")
+      ) {
+        setTimeout(() => {
+          window.location.href = "/login";
+        }, 1500);
       }
     }
 
@@ -109,12 +161,25 @@ export const testVercelConnection = async () => {
   console.group("🔍 Vercel → Render Connection Test");
 
   try {
-    // Test basic connection
-    const response = await fetch(API_BASE_URL);
-    const data = await response.json();
+    // Test with fetch using CORS mode
+    const response = await fetch(API_BASE_URL, {
+      method: "GET",
+      mode: "cors",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+    });
+
+    let data;
+    try {
+      data = await response.json();
+    } catch {
+      data = await response.text();
+    }
 
     console.log("✅ Backend is reachable");
-    console.log("Status:", response.status);
+    console.log("Status:", response.status, response.statusText);
     console.log("Data:", data);
     console.groupEnd();
 
@@ -134,6 +199,31 @@ export const testVercelConnection = async () => {
       frontend: FRONTEND_URL,
       backend: API_BASE_URL,
       fix: `Add "${FRONTEND_URL}" to backend CORS allowedOrigins array`,
+      fix2: `Make sure backend server is awake (Render free tier sleeps after inactivity)`,
+    };
+  }
+};
+
+// Test backend endpoint
+export const testBackendEndpoint = async (endpoint = "/") => {
+  try {
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: "GET",
+      mode: "cors",
+      headers: { Accept: "application/json" },
+    });
+
+    return {
+      success: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      url: `${API_BASE_URL}${endpoint}`,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message,
+      url: `${API_BASE_URL}${endpoint}`,
     };
   }
 };
@@ -153,6 +243,7 @@ export const createEmergencyUser = async (
 
     const response = await fetch(`${API_BASE_URL}/api/force-create-user`, {
       method: "POST",
+      mode: "cors",
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
@@ -160,7 +251,13 @@ export const createEmergencyUser = async (
       body: JSON.stringify(userData),
     });
 
-    const data = await response.json();
+    let data;
+    try {
+      data = await response.json();
+    } catch {
+      data = { text: await response.text() };
+    }
+
     console.log("Emergency user result:", data);
 
     return {
@@ -187,6 +284,7 @@ export const testLoginEndpoint = async (
   try {
     const response = await fetch(`${API_BASE_URL}/api/user/login`, {
       method: "POST",
+      mode: "cors",
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
@@ -194,9 +292,17 @@ export const testLoginEndpoint = async (
       body: JSON.stringify(credentials),
     });
 
+    let data;
+    try {
+      data = await response.json();
+    } catch {
+      data = { text: await response.text() };
+    }
+
     return {
       success: response.ok,
       status: response.status,
+      data: data,
       message: `Login endpoint: ${response.status} ${response.statusText}`,
     };
   } catch (error) {
@@ -209,6 +315,7 @@ export const testLoginEndpoint = async (
 
 // Auth helpers
 export const isAuthenticated = () => !!localStorage.getItem("authToken");
+export const getAuthToken = () => localStorage.getItem("authToken");
 export const setAuthToken = (token) => localStorage.setItem("authToken", token);
 export const removeAuthToken = () => localStorage.removeItem("authToken");
 
@@ -216,20 +323,53 @@ export const removeAuthToken = () => localStorage.removeItem("authToken");
 if (typeof window !== "undefined") {
   setTimeout(() => {
     console.log("🔧 Auto-testing Vercel ↔ Render connection...");
-    testVercelConnection().then((result) => {
-      if (!result.success) {
-        console.error("❌ CORS ISSUE DETECTED");
-        console.error("Fix:", result.fix);
 
-        // Try emergency user creation
-        createEmergencyUser().then((userResult) => {
-          console.log(
-            "Emergency user attempt:",
-            userResult.success ? "✅ Success" : "❌ Failed"
-          );
-        });
-      }
-    });
+    // Only test if we're on Vercel
+    if (IS_VERCEL) {
+      testVercelConnection().then((result) => {
+        if (!result.success) {
+          console.error("❌ CORS ISSUE DETECTED");
+          console.error("Error:", result.error);
+          console.error("Fix:", result.fix);
+          console.error("Fix 2:", result.fix2);
+
+          // Also test specific endpoints
+          testBackendEndpoint("/api/user/login").then((loginResult) => {
+            console.log(
+              "Login endpoint test:",
+              loginResult.success ? "✅ Accessible" : "❌ Blocked"
+            );
+          });
+
+          testBackendEndpoint("/api/force-create-user").then((createResult) => {
+            console.log(
+              "Create user endpoint test:",
+              createResult.success ? "✅ Accessible" : "❌ Blocked"
+            );
+          });
+
+          // Try emergency user creation
+          createEmergencyUser().then((userResult) => {
+            console.log(
+              "Emergency user attempt:",
+              userResult.success ? "✅ Success" : "❌ Failed"
+            );
+          });
+        } else {
+          console.log("🎉 Vercel ↔ Render connection successful!");
+
+          // Test login endpoint for good measure
+          testLoginEndpoint().then((loginTest) => {
+            console.log(
+              "Login endpoint:",
+              loginTest.success ? "✅ Working" : "❌ Not working"
+            );
+          });
+        }
+      });
+    } else {
+      console.log("🖥️ Running locally, skipping Vercel-specific tests");
+    }
   }, 3000);
 }
 
@@ -239,6 +379,11 @@ export {
   axiosWrapper,
   API_BASE_URL,
   testVercelConnection,
+  testBackendEndpoint,
   createEmergencyUser,
   testLoginEndpoint,
+  isAuthenticated,
+  getAuthToken,
+  setAuthToken,
+  removeAuthToken,
 };
