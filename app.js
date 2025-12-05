@@ -1,389 +1,341 @@
-import axios from "axios";
+const express = require("express");
+const connectDB = require("./config/database");
+const config = require("./config/config");
+const globalErrorHandler = require("./middlewares/globalErrorHandler");
+const cookieParser = require("cookie-parser");
+const cors = require("cors");
 
-// 🚀 RENDER BACKEND URL
-const API_BASE_URL = "https://delish-backend-1.onrender.com";
+// Route imports
+const inventoryRoutes = require("./routes/inventory");
+const userRoutes = require("./routes/userRoute");
+const orderRoutes = require("./routes/orderRoute");
+const tableRoutes = require("./routes/tableRoute");
+const paymentRoutes = require("./routes/paymentRoute");
+const salesRoutes = require("./routes/salesRoute");
 
-// Get current frontend URL
-const FRONTEND_URL = window.location.origin;
-const IS_VERCEL = FRONTEND_URL.includes("vercel.app");
+const app = express();
+const PORT = process.env.PORT || 8000;
 
-console.log("🚀 Frontend Platform:", IS_VERCEL ? "Vercel" : "Local");
-console.log("📍 Frontend URL:", FRONTEND_URL);
-console.log("🔗 Backend URL:", API_BASE_URL);
-console.log("🔄 Testing Vercel ↔ Render connection...");
+// Connect to database
+connectDB();
 
-// Create Axios instance optimized for Vercel
-const axiosWrapper = axios.create({
-  baseURL: API_BASE_URL,
-  withCredentials: false, // CRITICAL: Must be false for Vercel → Render
-  timeout: 30000,
-  headers: {
-    "Content-Type": "application/json",
-    Accept: "application/json",
-    "X-Requested-With": "XMLHttpRequest",
+// Enhanced CORS configuration for production
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "https://delish-frontend-eight.vercel.app",
+  "https://delish-final-pos.vercel.app",
+  "https://final-delish-pos.vercel.app",
+  "https://delish-pos-final.vercel.app",
+];
+
+// Create custom CORS middleware
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log(`🔒 CORS blocked origin: ${origin}`);
+      callback(new Error("Not allowed by CORS"));
+    }
   },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "Cookie",
+    "X-Requested-With",
+    "x-access-token",
+    "Accept",
+    "x-frontend-source", // Added lowercase
+    "x-frontend-url", // Added lowercase
+    "X-Frontend-Source", // Added uppercase
+    "X-Frontend-URL", // Added uppercase
+    "Access-Control-Allow-Origin",
+    "Access-Control-Allow-Headers",
+    "Access-Control-Allow-Methods",
+  ],
+  exposedHeaders: ["set-cookie", "Authorization"],
+  preflightContinue: false,
+  optionsSuccessStatus: 204,
+};
+
+// Apply CORS middleware
+app.use(cors(corsOptions));
+
+// Handle preflight requests
+app.options("*", cors(corsOptions));
+
+// Body parsing middleware
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+app.use(cookieParser());
+
+// Request logging middleware
+app.use((req, res, next) => {
+  console.log(`\n🌐 ${new Date().toISOString()} - ${req.method} ${req.url}`);
+  console.log("   Origin:", req.headers.origin);
+  console.log("   Headers:", req.headers);
+  console.log("   User-Agent:", req.headers["user-agent"]);
+  next();
 });
 
-// Auth interceptor
-axiosWrapper.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem("authToken");
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-
-    // Add Vercel-specific headers for better CORS handling
-    if (IS_VERCEL) {
-      config.headers["Origin"] = FRONTEND_URL;
-      config.headers["Referer"] = FRONTEND_URL;
-      config.headers["X-Forwarded-Host"] = FRONTEND_URL;
-    }
-
-    console.log(
-      `📤 API Request: ${config.method?.toUpperCase()} ${config.url}`
-    );
-    return config;
-  },
-  (error) => {
-    console.error("❌ Request Error:", error);
-    return Promise.reject(error);
+// Add CORS headers manually for all responses
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin);
   }
-);
+  res.header("Access-Control-Allow-Credentials", "true");
+  res.header(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+  );
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, Cookie, X-Requested-With, x-access-token, Accept, x-frontend-source, x-frontend-url, X-Frontend-Source, X-Frontend-URL"
+  );
+  next();
+});
 
-// Response interceptor with Vercel-specific handling
-axiosWrapper.interceptors.response.use(
-  (response) => {
-    console.log(`✅ API Response [${response.status}]: ${response.config.url}`);
+// Health check endpoint
+app.get("/health", (req, res) => {
+  res.json({
+    status: "OK",
+    service: "Delish POS Backend",
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || "development",
+    database: "Connected",
+    cors: "Configured",
+    allowedOrigins: allowedOrigins,
+  });
+});
 
-    // Auto-save token from login/signup responses
-    if (
-      response.data &&
-      (response.config.url.includes("/login") ||
-        response.config.url.includes("/register") ||
-        response.config.url.includes("/force-create-user"))
-    ) {
-      const token = response.data.token || response.data.data?.token;
-      if (token) {
-        localStorage.setItem("authToken", token);
-        console.log("🔑 Token saved to localStorage");
-      }
-    }
-
-    return response;
-  },
-  (error) => {
-    const status = error.response?.status;
-    const url = error.config?.url;
-    const message = error.message;
-
-    console.error(`❌ API Error [${status}]:`, message);
-    console.error("Frontend (Vercel):", FRONTEND_URL);
-    console.error("Backend (Render):", API_BASE_URL);
-    console.error("Endpoint:", url);
-
-    // Handle CORS errors
-    if (
-      error.message.includes("CORS") ||
-      error.code === "ERR_NETWORK" ||
-      error.code === "ECONNREFUSED"
-    ) {
-      error.userMessage = `
-🚨 CORS BLOCKED - Vercel cannot access Render
-
-Your Vercel Frontend: ${FRONTEND_URL}
-Render Backend: ${API_BASE_URL}
-
-REQUIRED FIX:
-1. Update backend CORS to include: "${FRONTEND_URL}"
-2. Or allow all origins temporarily: "*"
-3. Make sure backend is awake (Render free tier sleeps)
-
-TEST CONNECTION:
-// Run in browser console
-fetch("${API_BASE_URL}", {
-  mode: 'cors',
-  headers: { 'Accept': 'application/json' }
-})
-.then(r => console.log("Status:", r.status, r.statusText))
-.then(r => r.text())
-.then(d => console.log("Response:", d))
-.catch(e => console.error("Error:", e));
-
-// Create emergency user with CORS mode
-fetch("${API_BASE_URL}/api/force-create-user", {
-  method: 'POST',
-  mode: 'cors',
-  headers: {'Content-Type':'application/json'},
-  body: JSON.stringify({
-    name: "Admin",
-    email: "admin@delish.com",
-    password: "admin123",
-    role: "admin"
-  })
-})
-.then(r => r.json())
-.then(d => console.log("User:", d))
-.catch(e => console.error("Error:", e));
-      `;
-
-      // Show alert on login page
-      if (window.location.pathname.includes("/login")) {
-        setTimeout(() => {
-          const alertMsg = `CORS Issue Detected!\n\nVercel Frontend: ${FRONTEND_URL}\nRender Backend: ${API_BASE_URL}\n\n1. Check if backend is awake\n2. Update backend CORS to allow: ${FRONTEND_URL}\n3. Check browser console for details`;
-          console.warn(alertMsg);
-          alert(alertMsg);
-        }, 2000);
-      }
-    }
-
-    // Clear token on 401 Unauthorized
-    if (status === 401) {
-      localStorage.removeItem("authToken");
-      console.log("🔓 Token cleared due to 401 Unauthorized");
-
-      // Redirect to login if not already there
-      if (
-        !window.location.pathname.includes("/login") &&
-        !window.location.pathname.includes("/register")
-      ) {
-        setTimeout(() => {
-          window.location.href = "/login";
-        }, 1500);
-      }
-    }
-
-    return Promise.reject(error);
-  }
-);
-
-// Test connection specifically for Vercel
-export const testVercelConnection = async () => {
-  console.group("🔍 Vercel → Render Connection Test");
-
+// Enhanced user management endpoints
+app.post("/api/force-create-user", async (req, res) => {
   try {
-    // Test with fetch using CORS mode
-    const response = await fetch(API_BASE_URL, {
-      method: "GET",
-      mode: "cors",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
+    const User = require("./models/userModel");
+    const bcrypt = require("bcrypt");
+
+    const { name, email, phone, password, role } = req.body;
+
+    console.log("🚨 FORCE CREATING USER:", email);
+    console.log("📧 Request headers:", req.headers);
+
+    // Delete existing user first
+    await User.deleteOne({ email });
+
+    // Create new user
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const newUser = new User({
+      name: name || "Admin User",
+      email: email,
+      phone: phone || "1234567890",
+      password: hashedPassword,
+      role: role || "admin",
     });
 
-    let data;
-    try {
-      data = await response.json();
-    } catch {
-      data = await response.text();
-    }
+    await newUser.save();
+    console.log("✅ USER CREATED:", email);
 
-    console.log("✅ Backend is reachable");
-    console.log("Status:", response.status, response.statusText);
-    console.log("Data:", data);
-    console.groupEnd();
+    // Verify creation
+    const verifyUser = await User.findOne({ email });
 
-    return {
+    res.json({
       success: true,
-      status: response.status,
-      data: data,
-      message: `Vercel (${FRONTEND_URL}) can access Render backend`,
-    };
-  } catch (error) {
-    console.error("❌ Connection failed:", error.message);
-    console.groupEnd();
-
-    return {
-      success: false,
-      error: error.message,
-      frontend: FRONTEND_URL,
-      backend: API_BASE_URL,
-      fix: `Add "${FRONTEND_URL}" to backend CORS allowedOrigins array`,
-      fix2: `Make sure backend server is awake (Render free tier sleeps after inactivity)`,
-    };
-  }
-};
-
-// Test backend endpoint
-export const testBackendEndpoint = async (endpoint = "/") => {
-  try {
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-      method: "GET",
-      mode: "cors",
-      headers: { Accept: "application/json" },
-    });
-
-    return {
-      success: response.ok,
-      status: response.status,
-      statusText: response.statusText,
-      url: `${API_BASE_URL}${endpoint}`,
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error.message,
-      url: `${API_BASE_URL}${endpoint}`,
-    };
-  }
-};
-
-// Emergency user creation (bypass CORS if possible)
-export const createEmergencyUser = async (
-  userData = {
-    name: "Admin User",
-    email: "admin@delish.com",
-    phone: "1234567890",
-    password: "admin123",
-    role: "admin",
-  }
-) => {
-  try {
-    console.log("🚨 Attempting emergency user creation...");
-
-    const response = await fetch(`${API_BASE_URL}/api/force-create-user`, {
-      method: "POST",
-      mode: "cors",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
+      message: `User created successfully: ${email}`,
+      user: {
+        name: newUser.name,
+        email: newUser.email,
+        role: newUser.role,
       },
-      body: JSON.stringify(userData),
+      verified: !!verifyUser,
     });
-
-    let data;
-    try {
-      data = await response.json();
-    } catch {
-      data = { text: await response.text() };
-    }
-
-    console.log("Emergency user result:", data);
-
-    return {
-      success: response.ok,
-      data: data,
-      status: response.status,
-    };
   } catch (error) {
-    console.error("Emergency user creation failed:", error);
-    return {
+    console.error("❌ Error creating user:", error);
+    res.status(500).json({
       success: false,
+      message: "Failed to create user",
       error: error.message,
-    };
+    });
   }
-};
+});
 
-// Quick login test
-export const testLoginEndpoint = async (
-  credentials = {
-    email: "admin@delish.com",
-    password: "admin123",
-  }
-) => {
+app.delete("/api/nuke-users", async (req, res) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/user/login`, {
-      method: "POST",
-      mode: "cors",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(credentials),
+    const User = require("./models/userModel");
+    const result = await User.deleteMany({});
+
+    res.json({
+      success: true,
+      message: `Deleted ${result.deletedCount} users`,
+      deletedCount: result.deletedCount,
     });
-
-    let data;
-    try {
-      data = await response.json();
-    } catch {
-      data = { text: await response.text() };
-    }
-
-    return {
-      success: response.ok,
-      status: response.status,
-      data: data,
-      message: `Login endpoint: ${response.status} ${response.statusText}`,
-    };
   } catch (error) {
-    return {
+    console.error("❌ Error deleting users:", error);
+    res.status(500).json({
       success: false,
+      message: "Failed to delete users",
       error: error.message,
-    };
+    });
   }
-};
+});
 
-// Auth helpers
-export const isAuthenticated = () => !!localStorage.getItem("authToken");
-export const getAuthToken = () => localStorage.getItem("authToken");
-export const setAuthToken = (token) => localStorage.setItem("authToken", token);
-export const removeAuthToken = () => localStorage.removeItem("authToken");
+app.get("/api/debug-users", async (req, res) => {
+  try {
+    const User = require("./models/userModel");
+    const users = await User.find({})
+      .select("name email role createdAt")
+      .lean();
 
-// Auto-run tests
-if (typeof window !== "undefined") {
-  setTimeout(() => {
-    console.log("🔧 Auto-testing Vercel ↔ Render connection...");
+    res.json({
+      success: true,
+      users: users,
+      count: users.length,
+    });
+  } catch (error) {
+    console.error("❌ Error fetching users:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to get users",
+      error: error.message,
+    });
+  }
+});
 
-    // Only test if we're on Vercel
-    if (IS_VERCEL) {
-      testVercelConnection().then((result) => {
-        if (!result.success) {
-          console.error("❌ CORS ISSUE DETECTED");
-          console.error("Error:", result.error);
-          console.error("Fix:", result.fix);
-          console.error("Fix 2:", result.fix2);
+// Root endpoint with complete API documentation
+app.get("/", (req, res) => {
+  res.json({
+    message: "✅ Delish POS Server is running!",
+    server: {
+      port: PORT,
+      environment: process.env.NODE_ENV || "development",
+      baseURL: `https://${req.headers.host}`,
+    },
+    cors: {
+      configured: true,
+      allowedOrigins: allowedOrigins,
+      allowedHeaders: corsOptions.allowedHeaders,
+    },
+    endpoints: {
+      health: "GET /health",
+      auth: {
+        register: "POST /api/user/register",
+        login: "POST /api/user/login",
+        logout: "POST /api/user/logout",
+        profile: "GET /api/user/me",
+      },
+      sales: {
+        all: "GET /api/sales",
+        today: "GET /api/sales/today",
+        stats: "GET /api/sales/stats",
+        range: "GET /api/sales/range",
+        reports: "GET /api/sales/reports",
+      },
+      orders: {
+        create: "POST /api/order",
+        list: "GET /api/order",
+        single: "GET /api/order/:id",
+        update: "PUT /api/order/:id",
+        delete: "DELETE /api/order/:id",
+        stats: "GET /api/order/stats",
+      },
+      tables: {
+        create: "POST /api/table",
+        list: "GET /api/table",
+        update: "PUT /api/table/:id",
+      },
+      payments: {
+        create: "POST /api/payment/create-order",
+        verify: "POST /api/payment/verify-payment",
+        list: "GET /api/payment",
+        stats: "GET /api/payment/stats",
+      },
+      inventory: {
+        list: "GET /api/inventory",
+        create: "POST /api/inventory",
+        update: "PUT /api/inventory/:id",
+        delete: "DELETE /api/inventory/:id",
+        lowStock: "GET /api/inventory/low-stock",
+      },
+      admin: {
+        emergency: {
+          createUser: "POST /api/force-create-user",
+          deleteUsers: "DELETE /api/nuke-users",
+          listUsers: "GET /api/debug-users",
+        },
+      },
+    },
+    quickStart: [
+      "1. POST /api/force-create-user (create admin user)",
+      "2. POST /api/user/login (login with credentials)",
+      "3. Access protected endpoints with returned token",
+    ],
+    timestamp: new Date().toISOString(),
+  });
+});
 
-          // Also test specific endpoints
-          testBackendEndpoint("/api/user/login").then((loginResult) => {
-            console.log(
-              "Login endpoint test:",
-              loginResult.success ? "✅ Accessible" : "❌ Blocked"
-            );
-          });
+// API Routes
+app.use("/api/user", userRoutes);
+app.use("/api/order", orderRoutes);
+app.use("/api/table", tableRoutes);
+app.use("/api/payment", paymentRoutes);
+app.use("/api/inventory", inventoryRoutes);
+app.use("/api/sales", salesRoutes);
 
-          testBackendEndpoint("/api/force-create-user").then((createResult) => {
-            console.log(
-              "Create user endpoint test:",
-              createResult.success ? "✅ Accessible" : "❌ Blocked"
-            );
-          });
+// Global Error Handler
+app.use(globalErrorHandler);
 
-          // Try emergency user creation
-          createEmergencyUser().then((userResult) => {
-            console.log(
-              "Emergency user attempt:",
-              userResult.success ? "✅ Success" : "❌ Failed"
-            );
-          });
-        } else {
-          console.log("🎉 Vercel ↔ Render connection successful!");
+// 404 Handler
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: "Route not found",
+    path: req.path,
+    method: req.method,
+    availableEndpoints: [
+      "GET /health",
+      "POST /api/user/register",
+      "POST /api/user/login",
+      "GET /api/sales",
+      "GET /api/sales/today",
+      "GET /api/sales/stats",
+      "POST /api/order",
+      "GET /api/order",
+      "GET /api/inventory",
+    ],
+  });
+});
 
-          // Test login endpoint for good measure
-          testLoginEndpoint().then((loginTest) => {
-            console.log(
-              "Login endpoint:",
-              loginTest.success ? "✅ Working" : "❌ Not working"
-            );
-          });
-        }
-      });
-    } else {
-      console.log("🖥️ Running locally, skipping Vercel-specific tests");
-    }
-  }, 3000);
-}
+// Start Server
+const server = app.listen(PORT, () => {
+  console.log(`\n🎉 🚀 DELISH POS BACKEND SERVER STARTED!`);
+  console.log(`=========================================`);
+  console.log(`📍 Port: ${PORT}`);
+  console.log(`🌐 Environment: ${process.env.NODE_ENV || "development"}`);
+  console.log(`🕒 Started: ${new Date().toISOString()}`);
+  console.log(`🌍 Allowed Origins: ${allowedOrigins.join(", ")}`);
+  console.log(`🔧 CORS Headers: ${corsOptions.allowedHeaders.join(", ")}`);
+  console.log(`=========================================\n`);
+});
 
-// Export
-export {
-  axiosWrapper as default,
-  axiosWrapper,
-  API_BASE_URL,
-  testVercelConnection,
-  testBackendEndpoint,
-  createEmergencyUser,
-  testLoginEndpoint,
-  isAuthenticated,
-  getAuthToken,
-  setAuthToken,
-  removeAuthToken,
-};
+// Graceful shutdown
+process.on("SIGINT", async () => {
+  console.log("\n🛑 Shutting down server gracefully...");
+  server.close(() => {
+    console.log("✅ Server closed");
+    process.exit(0);
+  });
+});
+
+process.on("SIGTERM", async () => {
+  console.log("\n🛑 SIGTERM received, shutting down gracefully...");
+  server.close(() => {
+    console.log("✅ Server closed");
+    process.exit(0);
+  });
+});
