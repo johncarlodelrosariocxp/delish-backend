@@ -51,10 +51,10 @@ const corsOptions = {
     "X-Requested-With",
     "x-access-token",
     "Accept",
-    "x-frontend-source",
-    "x-frontend-url",
-    "X-Frontend-Source",
-    "X-Frontend-URL",
+    "x-frontend-source", // Added lowercase
+    "x-frontend-url", // Added lowercase
+    "X-Frontend-Source", // Added uppercase
+    "X-Frontend-URL", // Added uppercase
     "Access-Control-Allow-Origin",
     "Access-Control-Allow-Headers",
     "Access-Control-Allow-Methods",
@@ -79,6 +79,8 @@ app.use(cookieParser());
 app.use((req, res, next) => {
   console.log(`\n🌐 ${new Date().toISOString()} - ${req.method} ${req.url}`);
   console.log("   Origin:", req.headers.origin);
+  console.log("   Headers:", req.headers);
+  console.log("   User-Agent:", req.headers["user-agent"]);
   next();
 });
 
@@ -113,291 +115,6 @@ app.get("/health", (req, res) => {
   });
 });
 
-// ==================== DEBUG ENDPOINTS ====================
-
-// Debug orders endpoint
-app.get("/api/debug/orders", async (req, res) => {
-  try {
-    const Order = require("./models/orderModel");
-    const orders = await Order.find({})
-      .populate("user", "name email role")
-      .populate("table", "tableNumber capacity status")
-      .sort({ createdAt: -1 })
-      .lean();
-
-    res.json({
-      success: true,
-      count: orders.length,
-      orders: orders,
-      database: process.env.MONGODB_URI ? "Connected" : "Not connected",
-    });
-  } catch (error) {
-    console.error("❌ Debug orders error:", error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Debug payments endpoint
-app.get("/api/debug/payments", async (req, res) => {
-  try {
-    const Payment = require("./models/paymentModel");
-    const payments = await Payment.find({})
-      .populate("user", "name email role")
-      .sort({ createdAt: -1 })
-      .lean();
-
-    res.json({
-      success: true,
-      count: payments.length,
-      payments: payments,
-    });
-  } catch (error) {
-    console.error("❌ Debug payments error:", error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Debug database collections
-app.get("/api/debug/database", async (req, res) => {
-  try {
-    const mongoose = require("mongoose");
-    const collections = await mongoose.connection.db
-      .listCollections()
-      .toArray();
-
-    const collectionCounts = {};
-
-    for (const collection of collections) {
-      const Model =
-        mongoose.models[collection.name] ||
-        mongoose.model(
-          collection.name,
-          new mongoose.Schema({}, { strict: false })
-        );
-      const count = await Model.countDocuments();
-      collectionCounts[collection.name] = count;
-    }
-
-    res.json({
-      success: true,
-      database:
-        mongoose.connection.readyState === 1 ? "Connected" : "Disconnected",
-      connectionState: mongoose.connection.readyState,
-      collections: collections.map((c) => c.name),
-      counts: collectionCounts,
-    });
-  } catch (error) {
-    console.error("❌ Debug database error:", error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// FIXED: Create test data endpoint that matches your Order model
-app.post("/api/test/create-orders", async (req, res) => {
-  try {
-    const Order = require("./models/orderModel");
-    const User = require("./models/userModel");
-    const Table = require("./models/tableModel");
-
-    // Get or create test user
-    let user = await User.findOne({ email: "admin@delish.com" });
-    if (!user) {
-      const bcrypt = require("bcrypt");
-      const hashedPassword = await bcrypt.hash("admin123", 10);
-      user = await User.create({
-        name: "Admin User",
-        email: "admin@delish.com",
-        phone: "1234567890",
-        password: hashedPassword,
-        role: "admin",
-      });
-    }
-
-    // Get or create test table
-    let table = await Table.findOne({ tableNumber: "T1" });
-    if (!table) {
-      table = await Table.create({
-        tableNumber: "T1",
-        capacity: 4,
-        status: "available",
-      });
-    }
-
-    // Create test orders with the CORRECT structure matching your Order model
-    const testOrdersData = [
-      {
-        user: user._id,
-        table: table._id,
-        customerDetails: {
-          name: "John Doe",
-          phone: "1234567890",
-          guests: 2,
-        },
-        items: [
-          { name: "Burger", quantity: 2, price: 150, total: 300 },
-          { name: "Fries", quantity: 1, price: 80, total: 80 },
-        ],
-        bills: {
-          total: 380,
-          tax: 38,
-          totalWithTax: 418,
-        },
-        orderStatus: "completed",
-        paymentMethod: "cash",
-        paymentStatus: "paid",
-        notes: "Test order 1",
-      },
-      {
-        user: user._id,
-        table: table._id,
-        customerDetails: {
-          name: "Jane Smith",
-          phone: "0987654321",
-          guests: 4,
-        },
-        items: [
-          { name: "Pizza", quantity: 1, price: 250, total: 250 },
-          { name: "Coke", quantity: 2, price: 50, total: 100 },
-        ],
-        bills: {
-          total: 350,
-          tax: 35,
-          totalWithTax: 385,
-        },
-        orderStatus: "preparing",
-        paymentMethod: "card",
-        paymentStatus: "pending",
-        notes: "Test order 2",
-      },
-      {
-        user: user._id,
-        table: table._id,
-        customerDetails: {
-          name: "Bob Wilson",
-          phone: "5551234567",
-          guests: 1,
-        },
-        items: [{ name: "Pasta", quantity: 3, price: 180, total: 540 }],
-        bills: {
-          total: 540,
-          tax: 54,
-          totalWithTax: 594,
-        },
-        orderStatus: "served",
-        paymentMethod: "online",
-        paymentStatus: "paid",
-        notes: "Test order 3",
-      },
-    ];
-
-    const orders = await Order.create(testOrdersData);
-
-    // Populate the created orders
-    const populatedOrders = await Order.find({
-      _id: { $in: orders.map((o) => o._id) },
-    })
-      .populate("user", "name email role")
-      .populate("table", "tableNumber");
-
-    res.json({
-      success: true,
-      message: "Test orders created successfully",
-      count: populatedOrders.length,
-      orders: populatedOrders,
-    });
-  } catch (error) {
-    console.error("❌ Test data error:", error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      details: error.errors,
-    });
-  }
-});
-
-// Quick order test endpoint with minimal data
-app.post("/api/test/simple-order", async (req, res) => {
-  try {
-    const Order = require("./models/orderModel");
-    const User = require("./models/userModel");
-
-    // Get any user
-    const user = await User.findOne();
-
-    if (!user) {
-      return res.status(400).json({
-        success: false,
-        message: "No users found. Create a user first.",
-      });
-    }
-
-    // Create simple test order with all required fields
-    const order = await Order.create({
-      user: user._id,
-      customerDetails: {
-        name: "Test Customer",
-        phone: "1234567890",
-        guests: 1,
-      },
-      items: [
-        {
-          name: "Test Item",
-          quantity: 1,
-          price: 100,
-          total: 100,
-        },
-      ],
-      bills: {
-        total: 100,
-        tax: 10,
-        totalWithTax: 110,
-      },
-      orderStatus: "pending",
-      paymentMethod: "cash",
-      paymentStatus: "pending",
-      notes: "Simple test order",
-    });
-
-    res.json({
-      success: true,
-      message: "Test order created",
-      order: await Order.findById(order._id).populate("user", "name email"),
-    });
-  } catch (error) {
-    console.error("❌ Simple order error:", error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      details: error.errors,
-    });
-  }
-});
-
-// Clear all test data
-app.delete("/api/test/clear-data", async (req, res) => {
-  try {
-    const Order = require("./models/orderModel");
-    const Payment = require("./models/paymentModel");
-
-    const [ordersDeleted, paymentsDeleted] = await Promise.all([
-      Order.deleteMany({}),
-      Payment.deleteMany({}),
-    ]);
-
-    res.json({
-      success: true,
-      message: "Test data cleared",
-      deleted: {
-        orders: ordersDeleted.deletedCount,
-        payments: paymentsDeleted.deletedCount,
-      },
-    });
-  } catch (error) {
-    console.error("❌ Clear data error:", error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
 // Enhanced user management endpoints
 app.post("/api/force-create-user", async (req, res) => {
   try {
@@ -407,6 +124,7 @@ app.post("/api/force-create-user", async (req, res) => {
     const { name, email, phone, password, role } = req.body;
 
     console.log("🚨 FORCE CREATING USER:", email);
+    console.log("📧 Request headers:", req.headers);
 
     // Delete existing user first
     await User.deleteOne({ email });
@@ -505,17 +223,6 @@ app.get("/", (req, res) => {
     },
     endpoints: {
       health: "GET /health",
-      debug: {
-        orders: "GET /api/debug/orders",
-        payments: "GET /api/debug/payments",
-        database: "GET /api/debug/database",
-        users: "GET /api/debug-users",
-      },
-      test: {
-        createOrders: "POST /api/test/create-orders",
-        simpleOrder: "POST /api/test/simple-order",
-        clearData: "DELETE /api/test/clear-data",
-      },
       auth: {
         register: "POST /api/user/register",
         login: "POST /api/user/login",
@@ -565,9 +272,8 @@ app.get("/", (req, res) => {
     },
     quickStart: [
       "1. POST /api/force-create-user (create admin user)",
-      "2. POST /api/test/simple-order (create test order)",
-      "3. POST /api/user/login (login with credentials)",
-      "4. Access protected endpoints with returned token",
+      "2. POST /api/user/login (login with credentials)",
+      "3. Access protected endpoints with returned token",
     ],
     timestamp: new Date().toISOString(),
   });
@@ -586,33 +292,13 @@ app.use(globalErrorHandler);
 
 // 404 Handler
 app.use((req, res) => {
-  // Check if it's a common mistake
-  const commonMistakes = {
-    "/api/login": "/api/user/login",
-    "/api/register": "/api/user/register",
-    "/api/logout": "/api/user/logout",
-    "/api/me": "/api/user/me",
-  };
-
-  const suggestedPath = commonMistakes[req.path];
-  const suggestion = suggestedPath
-    ? `Did you mean: ${req.method} ${suggestedPath}?`
-    : "Check the available endpoints below";
-
   res.status(404).json({
     success: false,
     message: "Route not found",
     path: req.path,
     method: req.method,
-    suggestion: suggestion,
     availableEndpoints: [
       "GET /health",
-      "GET /api/debug/orders",
-      "GET /api/debug/payments",
-      "GET /api/debug/database",
-      "POST /api/test/create-orders",
-      "POST /api/test/simple-order",
-      "POST /api/force-create-user",
       "POST /api/user/register",
       "POST /api/user/login",
       "GET /api/sales",
@@ -633,13 +319,7 @@ const server = app.listen(PORT, () => {
   console.log(`🌐 Environment: ${process.env.NODE_ENV || "development"}`);
   console.log(`🕒 Started: ${new Date().toISOString()}`);
   console.log(`🌍 Allowed Origins: ${allowedOrigins.join(", ")}`);
-  console.log(`=========================================\n`);
-  console.log(`🔍 DEBUG ENDPOINTS AVAILABLE:`);
-  console.log(`   GET  /api/debug/orders`);
-  console.log(`   GET  /api/debug/payments`);
-  console.log(`   GET  /api/debug/database`);
-  console.log(`   POST /api/test/simple-order`);
-  console.log(`   POST /api/force-create-user`);
+  console.log(`🔧 CORS Headers: ${corsOptions.allowedHeaders.join(", ")}`);
   console.log(`=========================================\n`);
 });
 
