@@ -251,10 +251,16 @@ const orderSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
-    tableId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Table",
-      default: null,
+    // Remove the tableId field since you're using a string table field
+    // tableId: {
+    //   type: mongoose.Schema.Types.ObjectId,
+    //   ref: "Table",
+    //   default: null,
+    // },
+    // Table field - made optional (not required)
+    table: {
+      type: String,
+      default: "",
     },
     totalAmount: {
       type: Number,
@@ -490,5 +496,6 @@ orderSchema.index({ paymentStatus: 1 });
 orderSchema.index({ createdAt: -1 });
 orderSchema.index({ user: 1 });
 orderSchema.index({ "customerDetails.name": 1 });
+orderSchema.index({ table: 1 }); // Index for the new table field
 
 module.exports = mongoose.model("Order", orderSchema);
