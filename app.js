@@ -79,8 +79,6 @@ app.use(cookieParser());
 app.use((req, res, next) => {
   console.log(`\n🌐 ${new Date().toISOString()} - ${req.method} ${req.url}`);
   console.log("   Origin:", req.headers.origin);
-  console.log("   Headers:", req.headers);
-  console.log("   User-Agent:", req.headers["user-agent"]);
   next();
 });
 
@@ -194,7 +192,7 @@ app.get("/api/debug/database", async (req, res) => {
   }
 });
 
-// Create test data endpoint
+// FIXED: Create test data endpoint that matches your Order model
 app.post("/api/test/create-orders", async (req, res) => {
   try {
     const Order = require("./models/orderModel");
@@ -225,42 +223,74 @@ app.post("/api/test/create-orders", async (req, res) => {
       });
     }
 
-    // Create test orders
-    const orders = await Order.create([
+    // Create test orders with the CORRECT structure matching your Order model
+    const testOrdersData = [
       {
         user: user._id,
         table: table._id,
+        customerDetails: {
+          name: "John Doe",
+          phone: "1234567890",
+          guests: 2,
+        },
         items: [
           { name: "Burger", quantity: 2, price: 150, total: 300 },
           { name: "Fries", quantity: 1, price: 80, total: 80 },
         ],
-        totalAmount: 380,
-        status: "completed",
+        bills: {
+          total: 380,
+          tax: 38,
+          totalWithTax: 418,
+        },
+        orderStatus: "completed",
+        paymentMethod: "cash",
         paymentStatus: "paid",
         notes: "Test order 1",
       },
       {
         user: user._id,
         table: table._id,
+        customerDetails: {
+          name: "Jane Smith",
+          phone: "0987654321",
+          guests: 4,
+        },
         items: [
           { name: "Pizza", quantity: 1, price: 250, total: 250 },
           { name: "Coke", quantity: 2, price: 50, total: 100 },
         ],
-        totalAmount: 350,
-        status: "preparing",
+        bills: {
+          total: 350,
+          tax: 35,
+          totalWithTax: 385,
+        },
+        orderStatus: "preparing",
+        paymentMethod: "card",
         paymentStatus: "pending",
         notes: "Test order 2",
       },
       {
         user: user._id,
         table: table._id,
+        customerDetails: {
+          name: "Bob Wilson",
+          phone: "5551234567",
+          guests: 1,
+        },
         items: [{ name: "Pasta", quantity: 3, price: 180, total: 540 }],
-        totalAmount: 540,
-        status: "served",
+        bills: {
+          total: 540,
+          tax: 54,
+          totalWithTax: 594,
+        },
+        orderStatus: "served",
+        paymentMethod: "online",
         paymentStatus: "paid",
         notes: "Test order 3",
       },
-    ]);
+    ];
+
+    const orders = await Order.create(testOrdersData);
 
     // Populate the created orders
     const populatedOrders = await Order.find({
@@ -277,7 +307,69 @@ app.post("/api/test/create-orders", async (req, res) => {
     });
   } catch (error) {
     console.error("❌ Test data error:", error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      details: error.errors,
+    });
+  }
+});
+
+// Quick order test endpoint with minimal data
+app.post("/api/test/simple-order", async (req, res) => {
+  try {
+    const Order = require("./models/orderModel");
+    const User = require("./models/userModel");
+
+    // Get any user
+    const user = await User.findOne();
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "No users found. Create a user first.",
+      });
+    }
+
+    // Create simple test order with all required fields
+    const order = await Order.create({
+      user: user._id,
+      customerDetails: {
+        name: "Test Customer",
+        phone: "1234567890",
+        guests: 1,
+      },
+      items: [
+        {
+          name: "Test Item",
+          quantity: 1,
+          price: 100,
+          total: 100,
+        },
+      ],
+      bills: {
+        total: 100,
+        tax: 10,
+        totalWithTax: 110,
+      },
+      orderStatus: "pending",
+      paymentMethod: "cash",
+      paymentStatus: "pending",
+      notes: "Simple test order",
+    });
+
+    res.json({
+      success: true,
+      message: "Test order created",
+      order: await Order.findById(order._id).populate("user", "name email"),
+    });
+  } catch (error) {
+    console.error("❌ Simple order error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      details: error.errors,
+    });
   }
 });
 
@@ -315,7 +407,6 @@ app.post("/api/force-create-user", async (req, res) => {
     const { name, email, phone, password, role } = req.body;
 
     console.log("🚨 FORCE CREATING USER:", email);
-    console.log("📧 Request headers:", req.headers);
 
     // Delete existing user first
     await User.deleteOne({ email });
@@ -422,6 +513,7 @@ app.get("/", (req, res) => {
       },
       test: {
         createOrders: "POST /api/test/create-orders",
+        simpleOrder: "POST /api/test/simple-order",
         clearData: "DELETE /api/test/clear-data",
       },
       auth: {
@@ -473,7 +565,7 @@ app.get("/", (req, res) => {
     },
     quickStart: [
       "1. POST /api/force-create-user (create admin user)",
-      "2. POST /api/test/create-orders (create test orders)",
+      "2. POST /api/test/simple-order (create test order)",
       "3. POST /api/user/login (login with credentials)",
       "4. Access protected endpoints with returned token",
     ],
@@ -519,6 +611,7 @@ app.use((req, res) => {
       "GET /api/debug/payments",
       "GET /api/debug/database",
       "POST /api/test/create-orders",
+      "POST /api/test/simple-order",
       "POST /api/force-create-user",
       "POST /api/user/register",
       "POST /api/user/login",
@@ -540,14 +633,12 @@ const server = app.listen(PORT, () => {
   console.log(`🌐 Environment: ${process.env.NODE_ENV || "development"}`);
   console.log(`🕒 Started: ${new Date().toISOString()}`);
   console.log(`🌍 Allowed Origins: ${allowedOrigins.join(", ")}`);
-  console.log(`🔧 CORS Headers: ${corsOptions.allowedHeaders.join(", ")}`);
   console.log(`=========================================\n`);
   console.log(`🔍 DEBUG ENDPOINTS AVAILABLE:`);
   console.log(`   GET  /api/debug/orders`);
   console.log(`   GET  /api/debug/payments`);
   console.log(`   GET  /api/debug/database`);
-  console.log(`   GET  /api/debug-users`);
-  console.log(`   POST /api/test/create-orders`);
+  console.log(`   POST /api/test/simple-order`);
   console.log(`   POST /api/force-create-user`);
   console.log(`=========================================\n`);
 });
