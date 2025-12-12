@@ -33,15 +33,12 @@ const register = async (req, res, next) => {
       return next(createHttpError(400, "User already exists!"));
     }
 
-    // ✅ FIXED: Hash password ONCE in controller
-    const hashedPassword = await bcrypt.hash(password, 10);
-    console.log("🔑 Password hashed in controller");
-
+    // ✅ FIXED: Don't hash here - let the model pre-save hook handle it
     const newUser = await User.create({
       name,
       phone,
       email,
-      password: hashedPassword, // Already hashed - model won't hash again
+      password, // Model will hash this automatically
       role: normalizedRole,
     });
 
@@ -98,11 +95,8 @@ const login = async (req, res, next) => {
       passwordHashPreview: user.password?.substring(0, 20) + "...",
     });
 
-    // Compare password
+    // Compare password using bcrypt
     console.log("🔑 COMPARING PASSWORDS...");
-    console.log("   Input password:", password);
-    console.log("   Stored hash starts with:", user.password?.substring(0, 10));
-
     const isMatch = await bcrypt.compare(password, user.password);
     console.log("🔑 PASSWORD MATCH RESULT:", isMatch);
 

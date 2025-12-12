@@ -51,10 +51,10 @@ const corsOptions = {
     "X-Requested-With",
     "x-access-token",
     "Accept",
-    "x-frontend-source", // Added lowercase
-    "x-frontend-url", // Added lowercase
-    "X-Frontend-Source", // Added uppercase
-    "X-Frontend-URL", // Added uppercase
+    "x-frontend-source",
+    "x-frontend-url",
+    "X-Frontend-Source",
+    "X-Frontend-URL",
     "Access-Control-Allow-Origin",
     "Access-Control-Allow-Headers",
     "Access-Control-Allow-Methods",

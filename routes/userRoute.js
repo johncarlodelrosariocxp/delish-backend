@@ -6,7 +6,7 @@ const {
   logout,
   getUserDashboardStats,
   getAdminDashboardStats,
-  debugUser, // ADD THIS
+  debugUser,
 } = require("../controllers/userController");
 const { isVerifiedUser } = require("../middlewares/tokenVerification");
 const router = express.Router();
@@ -15,7 +15,7 @@ const router = express.Router();
 router.post("/register", register);
 router.post("/login", login);
 router.post("/logout", isVerifiedUser, logout);
-router.post("/debug-user", debugUser); // ADD THIS LINE
+router.post("/debug-user", debugUser);
 
 // 👤 USER ROUTES
 router.get("/me", isVerifiedUser, getUserData);

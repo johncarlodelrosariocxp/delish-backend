@@ -58,7 +58,20 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-// ✅ FIXED: REMOVED the pre-save hook - let controller handle hashing
+// ✅ FIXED: Add back the pre-save hook to ensure password is hashed
+userSchema.pre("save", async function (next) {
+  // Only hash the password if it has been modified (or is new)
+  if (!this.isModified("password")) return next();
+
+  try {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Compare password method
 userSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
