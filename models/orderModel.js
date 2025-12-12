@@ -3,9 +3,9 @@ const mongoose = require("mongoose");
 const orderSchema = new mongoose.Schema(
   {
     customerDetails: {
-      name: { type: String, required: true },
-      phone: { type: String, required: true }, // Fixed typo: requried -> required
-      guests: { type: Number, required: true },
+      name: { type: String, required: false },
+      phone: { type: String, required: false }, // Fixed typo: requried -> required
+      guests: { type: Number, required: false },
     },
     orderStatus: {
       type: String,
