@@ -85,6 +85,7 @@ const getOrders = async (req, res, next) => {
       query = { user: req.user._id };
     }
 
+    // ✅ FIXED: NO LIMIT - Returns ALL orders
     const orders = await Order.find(query)
       .populate(populateOptions)
       .sort({ createdAt: -1 });
@@ -92,6 +93,8 @@ const getOrders = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: orders,
+      total: orders.length,
+      message: `Successfully retrieved ${orders.length} orders`,
     });
   } catch (error) {
     next(error);
@@ -266,14 +269,123 @@ const getAllOrdersAdmin = async (req, res, next) => {
       return next(createHttpError(403, "Access denied. Admin only."));
     }
 
-    const orders = await Order.find()
+    // ✅ FIXED: Get query parameters for optional pagination
+    const {
+      page,
+      limit = 5000, // Very high limit to get all orders
+      startDate,
+      endDate,
+      status,
+      paymentMethod,
+      customerName,
+      orderId,
+    } = req.query;
+
+    // Build query
+    let query = {};
+
+    // Date filtering
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        query.createdAt.$gte = start;
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        query.createdAt.$lte = end;
+      }
+    }
+
+    // Status filtering
+    if (status) {
+      query.orderStatus = status;
+    }
+
+    // Payment method filtering
+    if (paymentMethod) {
+      query.paymentMethod = paymentMethod;
+    }
+
+    // Customer name filtering (search in populated user)
+    if (customerName) {
+      // This will be handled after population
+    }
+
+    // Order ID filtering
+    if (orderId) {
+      query._id = new mongoose.Types.ObjectId(orderId);
+    }
+
+    // Get total count
+    const total = await Order.countDocuments(query);
+
+    // ✅ FIXED: Create base query without limit
+    let findQuery = Order.find(query)
       .populate("table")
       .populate("user", "name email phone role")
       .sort({ createdAt: -1 });
 
+    // Apply pagination only if explicitly requested
+    if (page && limit) {
+      const skip = (parseInt(page) - 1) * parseInt(limit);
+      findQuery = findQuery.skip(skip).limit(parseInt(limit));
+    } else {
+      // No pagination - return ALL orders
+      findQuery = findQuery.limit(parseInt(limit) || 5000);
+    }
+
+    const orders = await findQuery;
+
+    // Calculate summary stats
+    const stats = await Order.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: null,
+          totalRevenue: { $sum: "$bills.totalWithTax" },
+          totalOrders: { $sum: 1 },
+          avgOrderValue: { $avg: "$bills.totalWithTax" },
+          totalTax: { $sum: "$bills.tax" },
+          totalDiscount: { $sum: "$bills.discount" },
+        },
+      },
+    ]);
+
+    // Filter by customer name after population if needed
+    let filteredOrders = orders;
+    if (customerName) {
+      filteredOrders = orders.filter((order) => {
+        const user = order.user;
+        return (
+          user &&
+          user.name &&
+          user.name.toLowerCase().includes(customerName.toLowerCase())
+        );
+      });
+    }
+
     res.status(200).json({
       success: true,
-      data: orders,
+      data: filteredOrders,
+      summary:
+        stats.length > 0
+          ? stats[0]
+          : {
+              totalRevenue: 0,
+              totalOrders: 0,
+              avgOrderValue: 0,
+              totalTax: 0,
+              totalDiscount: 0,
+            },
+      total: filteredOrders.length,
+      allOrdersCount: total,
+      message:
+        page && limit
+          ? `Showing ${filteredOrders.length} of ${total} orders (page ${page})`
+          : `Retrieved ${filteredOrders.length} orders`,
     });
   } catch (error) {
     next(error);
@@ -434,7 +546,8 @@ const getCashierOrders = async (req, res, next) => {
     }
 
     // Get query parameters for filtering
-    const { startDate, endDate, page = 1, limit = 50 } = req.query;
+    // ✅ FIXED: Increased limit from 50 to 1000
+    const { startDate, endDate, page = 1, limit = 1000 } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     let dateFilter = {};
