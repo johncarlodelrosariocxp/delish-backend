@@ -12,6 +12,7 @@ const orderRoutes = require("./routes/orderRoute");
 const tableRoutes = require("./routes/tableRoute");
 const paymentRoutes = require("./routes/paymentRoute");
 const salesRoutes = require("./routes/salesRoute");
+const menuRoutes = require("./routes/menuRoutes"); // ADDED: Menu routes
 
 const app = express();
 const PORT = process.env.PORT || 8000;
@@ -555,6 +556,25 @@ app.get("/", (req, res) => {
         delete: "DELETE /api/inventory/:id",
         lowStock: "GET /api/inventory/low-stock",
       },
+      menu: { // ADDED: Menu endpoints documentation
+        all: "GET /api/menu",
+        byTag: "GET /api/menu/tag/:tag",
+        byId: "GET /api/menu/:id",
+        items: "GET /api/menu/:menuId/items",
+        item: "GET /api/menu/:menuId/items/:itemId",
+        cheesecakeFlavors: "GET /api/menu/cheesecake/flavors",
+        cheesecakeFlavorsByCategory: "GET /api/menu/cheesecake/flavors/category/:category",
+        import: "POST /api/menu/import (admin)",
+        create: "POST /api/menu (admin)",
+        update: "PUT /api/menu/:id (admin)",
+        delete: "DELETE /api/menu/:id (admin)",
+        createItem: "POST /api/menu/:menuId/items (admin)",
+        updateItem: "PUT /api/menu/:menuId/items/:itemId (admin)",
+        deleteItem: "DELETE /api/menu/:menuId/items/:itemId (admin)",
+        createFlavor: "POST /api/menu/cheesecake/flavors (admin)",
+        updateFlavor: "PUT /api/menu/cheesecake/flavors/:id (admin)",
+        deleteFlavor: "DELETE /api/menu/cheesecake/flavors/:id (admin)",
+      },
       admin: {
         emergency: {
           createUser: "POST /api/force-create-user",
@@ -567,7 +587,8 @@ app.get("/", (req, res) => {
       "1. POST /api/force-create-user (create admin user)",
       "2. POST /api/test/simple-order (create test order)",
       "3. POST /api/user/login (login with credentials)",
-      "4. Access protected endpoints with returned token",
+      "4. GET /api/menu (view all menus)",
+      "5. Access protected endpoints with returned token",
     ],
     timestamp: new Date().toISOString(),
   });
@@ -580,6 +601,7 @@ app.use("/api/table", tableRoutes);
 app.use("/api/payment", paymentRoutes);
 app.use("/api/inventory", inventoryRoutes);
 app.use("/api/sales", salesRoutes);
+app.use("/api/menu", menuRoutes); // ADDED: Menu routes
 
 // Global Error Handler
 app.use(globalErrorHandler);
@@ -621,6 +643,10 @@ app.use((req, res) => {
       "POST /api/order",
       "GET /api/order",
       "GET /api/inventory",
+      "GET /api/menu", // ADDED
+      "GET /api/menu/tag/food", // ADDED
+      "GET /api/menu/tag/drink", // ADDED
+      "GET /api/menu/cheesecake/flavors", // ADDED
     ],
   });
 });
@@ -640,6 +666,12 @@ const server = app.listen(PORT, () => {
   console.log(`   GET  /api/debug/database`);
   console.log(`   POST /api/test/simple-order`);
   console.log(`   POST /api/force-create-user`);
+  console.log(`=========================================\n`);
+  console.log(`📋 MENU MANAGEMENT ENDPOINTS:`);
+  console.log(`   GET  /api/menu - Get all menus`);
+  console.log(`   GET  /api/menu/tag/food - Get food menus`);
+  console.log(`   GET  /api/menu/tag/drink - Get drink menus`);
+  console.log(`   GET  /api/menu/cheesecake/flavors - Get cheesecake flavors`);
   console.log(`=========================================\n`);
 });
 
