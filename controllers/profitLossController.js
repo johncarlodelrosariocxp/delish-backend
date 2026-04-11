@@ -20,51 +20,67 @@ exports.generateProfitLoss = async (req, res) => {
       createdAt: { $gte: start, $lte: end },
     });
     
-    // Get expenses within date range
-    const expenses = await Expense.find({
-      isActive: true,
-      datePurchased: { $gte: start, $lte: end },
-    });
-    
-    // Calculate totals
+    // Calculate total income
     const totalIncome = orders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
     const totalOrders = orders.length;
     const averageOrderValue = totalOrders > 0 ? totalIncome / totalOrders : 0;
     
-    // Calculate expenses used (yung nagamit lang sa orders)
-    const expensesSummary = await Expense.aggregate([
-      { $match: { isActive: true } },
-      {
-        $group: {
-          _id: null,
-          totalPurchased: { $sum: "$totalCost" },
-          totalUsedCost: { $sum: { $multiply: ["$usedQuantity", "$unitPrice"] } },
-          totalRemainingValue: { $sum: { $multiply: ["$remainingQuantity", "$unitPrice"] } },
+    // IMPORTANTE: Compute total expenses used - yung mga nagamit lang sa orders
+    let totalExpensesUsed = 0;
+    const expensesUsedBreakdown = [];
+    
+    for (const order of orders) {
+      for (const item of order.items) {
+        if (item.expenseId && item.totalCost > 0) {
+          totalExpensesUsed += item.totalCost;
+          
+          const expense = await Expense.findById(item.expenseId);
+          if (expense) {
+            expensesUsedBreakdown.push({
+              itemName: expense.itemName,
+              category: expense.category,
+              usedQuantity: item.quantity,
+              usedCost: item.totalCost,
+              unitPrice: item.costPerUnit || expense.unitPrice,
+            });
+          }
         }
       }
-    ]);
+    }
     
-    const totalPurchased = expensesSummary.length > 0 ? expensesSummary[0].totalPurchased : 0;
-    const totalExpensesUsed = expensesSummary.length > 0 ? expensesSummary[0].totalUsedCost : 0;
-    const remainingInventoryValue = expensesSummary.length > 0 ? expensesSummary[0].totalRemainingValue : 0;
+    // I-group ang expenses breakdown para walang duplicate
+    const uniqueExpensesBreakdown = [];
+    const expenseMap = new Map();
     
+    for (const exp of expensesUsedBreakdown) {
+      const key = exp.itemName;
+      if (expenseMap.has(key)) {
+        const existing = expenseMap.get(key);
+        existing.usedQuantity += exp.usedQuantity;
+        existing.usedCost += exp.usedCost;
+      } else {
+        expenseMap.set(key, {
+          itemName: exp.itemName,
+          category: exp.category,
+          usedQuantity: exp.usedQuantity,
+          usedCost: exp.usedCost,
+          unitPrice: exp.unitPrice
+        });
+      }
+    }
+    
+    for (const [key, value] of expenseMap) {
+      uniqueExpensesBreakdown.push(value);
+    }
+    
+    // Get total purchased and remaining inventory
+    const allExpenses = await Expense.find({ isActive: true });
+    const totalPurchased = allExpenses.reduce((sum, exp) => sum + (exp.totalCost || 0), 0);
+    const remainingInventoryValue = allExpenses.reduce((sum, exp) => sum + ((exp.remainingQuantity || 0) * (exp.unitPrice || 0)), 0);
+    
+    // Calculate profit
     const totalProfit = totalIncome - totalExpensesUsed;
     const profitMargin = totalIncome > 0 ? (totalProfit / totalIncome) * 100 : 0;
-    
-    // Get breakdown ng mga ginamit na expenses
-    const expensesUsedBreakdown = await Expense.aggregate([
-      { $match: { isActive: true, usedQuantity: { $gt: 0 } } },
-      {
-        $project: {
-          itemName: 1,
-          category: 1,
-          usedQuantity: 1,
-          usedCost: { $multiply: ["$usedQuantity", "$unitPrice"] },
-          unitPrice: 1,
-        }
-      },
-      { $sort: { usedCost: -1 } }
-    ]);
     
     // Create and save profit/loss report
     const profitLossReport = new ProfitLoss({
@@ -78,10 +94,10 @@ exports.generateProfitLoss = async (req, res) => {
       profitMargin,
       totalOrders,
       averageOrderValue,
-      totalExpenseItems: expensesUsedBreakdown.length,
-      expensesUsedBreakdown,
+      totalExpenseItems: uniqueExpensesBreakdown.length,
+      expensesUsedBreakdown: uniqueExpensesBreakdown,
       orders: orders.map(o => o._id),
-      expenses: expenses.map(e => e._id),
+      expenses: allExpenses.map(e => e._id),
       reportType,
       generatedAt: new Date(),
     });
@@ -217,7 +233,17 @@ exports.getAllTimeSummary = async (req, res) => {
     
     const totalIncome = orders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
     const totalPurchased = expenses.reduce((sum, exp) => sum + (exp.totalCost || 0), 0);
-    const totalExpensesUsed = expenses.reduce((sum, exp) => sum + ((exp.usedQuantity || 0) * (exp.unitPrice || 0)), 0);
+    
+    // Compute total expenses used - yung mga nagamit lang
+    let totalExpensesUsed = 0;
+    for (const order of orders) {
+      for (const item of order.items) {
+        if (item.totalCost > 0) {
+          totalExpensesUsed += item.totalCost;
+        }
+      }
+    }
+    
     const totalProfit = totalIncome - totalExpensesUsed;
     const profitMargin = totalIncome > 0 ? (totalProfit / totalIncome) * 100 : 0;
     
@@ -275,19 +301,18 @@ exports.generateDailyReport = async (req, res) => {
     const totalIncome = orders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
     const totalOrders = orders.length;
     
-    const expensesSummary = await Expense.aggregate([
-      { $match: { isActive: true } },
-      {
-        $group: {
-          _id: null,
-          totalUsedCost: { $sum: { $multiply: ["$usedQuantity", "$unitPrice"] } },
-          totalPurchased: { $sum: "$totalCost" },
+    // Compute expenses used for today
+    let totalExpensesUsed = 0;
+    for (const order of orders) {
+      for (const item of order.items) {
+        if (item.totalCost > 0) {
+          totalExpensesUsed += item.totalCost;
         }
       }
-    ]);
+    }
     
-    const totalExpensesUsed = expensesSummary.length > 0 ? expensesSummary[0].totalUsedCost : 0;
-    const totalPurchased = expensesSummary.length > 0 ? expensesSummary[0].totalPurchased : 0;
+    const allExpenses = await Expense.find({ isActive: true });
+    const totalPurchased = allExpenses.reduce((sum, exp) => sum + (exp.totalCost || 0), 0);
     
     const report = new ProfitLoss({
       startDate: startOfDay,
