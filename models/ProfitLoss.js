@@ -19,15 +19,7 @@ const profitLossSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
-    totalExpensesUsed: {
-      type: Number,
-      default: 0,
-    },
-    totalPurchased: {
-      type: Number,
-      default: 0,
-    },
-    remainingInventoryValue: {
+    totalExpenses: {
       type: Number,
       default: 0,
     },
@@ -51,13 +43,15 @@ const profitLossSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
-    expensesUsedBreakdown: [
+    expensesBreakdown: [
       {
         itemName: String,
         category: String,
-        usedQuantity: Number,
-        usedCost: Number,
+        quantity: Number,
+        unit: String,
         unitPrice: Number,
+        totalCost: Number,
+        datePurchased: Date,
       },
     ],
     orders: [

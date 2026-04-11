@@ -8,6 +8,10 @@ exports.generateProfitLoss = async (req, res) => {
   try {
     const { startDate, endDate, reportType = "custom" } = req.body;
     
+    console.log("=========================================");
+    console.log("📊 GENERATING PROFIT & LOSS REPORT");
+    console.log("=========================================");
+    
     let start = startDate ? new Date(startDate) : new Date();
     let end = endDate ? new Date(endDate) : new Date();
     
@@ -20,84 +24,65 @@ exports.generateProfitLoss = async (req, res) => {
       createdAt: { $gte: start, $lte: end },
     });
     
+    console.log(`📋 Orders found: ${orders.length}`);
+    
     // Calculate total income
-    const totalIncome = orders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
-    const totalOrders = orders.length;
-    const averageOrderValue = totalOrders > 0 ? totalIncome / totalOrders : 0;
-    
-    // IMPORTANTE: Compute total expenses used - yung mga nagamit lang sa orders
-    let totalExpensesUsed = 0;
-    const expensesUsedBreakdown = [];
-    
+    let totalIncome = 0;
     for (const order of orders) {
-      for (const item of order.items) {
-        if (item.expenseId && item.totalCost > 0) {
-          totalExpensesUsed += item.totalCost;
-          
-          const expense = await Expense.findById(item.expenseId);
-          if (expense) {
-            expensesUsedBreakdown.push({
-              itemName: expense.itemName,
-              category: expense.category,
-              usedQuantity: item.quantity,
-              usedCost: item.totalCost,
-              unitPrice: item.costPerUnit || expense.unitPrice,
-            });
-          }
-        }
-      }
+      totalIncome += order.totalAmount || 0;
     }
     
-    // I-group ang expenses breakdown para walang duplicate
-    const uniqueExpensesBreakdown = [];
-    const expenseMap = new Map();
+    console.log(`💰 Total Income: ₱${totalIncome.toFixed(2)}`);
     
-    for (const exp of expensesUsedBreakdown) {
-      const key = exp.itemName;
-      if (expenseMap.has(key)) {
-        const existing = expenseMap.get(key);
-        existing.usedQuantity += exp.usedQuantity;
-        existing.usedCost += exp.usedCost;
-      } else {
-        expenseMap.set(key, {
-          itemName: exp.itemName,
-          category: exp.category,
-          usedQuantity: exp.usedQuantity,
-          usedCost: exp.usedCost,
-          unitPrice: exp.unitPrice
-        });
-      }
+    // ============================================================
+    // IMPORTANTE: LAHAT NG EXPENSES SA DATE RANGE - BINABAWAS LAHAT
+    // ============================================================
+    const expenses = await Expense.find({
+      isActive: true,
+      datePurchased: { $gte: start, $lte: end },
+    });
+    
+    let totalExpenses = 0;
+    for (const expense of expenses) {
+      totalExpenses += expense.totalCost || 0;
     }
     
-    for (const [key, value] of expenseMap) {
-      uniqueExpensesBreakdown.push(value);
-    }
+    console.log(`💸 Total Expenses (LAHAT NG BINILI): ₱${totalExpenses.toFixed(2)}`);
+    console.log(`📦 Number of expenses: ${expenses.length}`);
     
-    // Get total purchased and remaining inventory
-    const allExpenses = await Expense.find({ isActive: true });
-    const totalPurchased = allExpenses.reduce((sum, exp) => sum + (exp.totalCost || 0), 0);
-    const remainingInventoryValue = allExpenses.reduce((sum, exp) => sum + ((exp.remainingQuantity || 0) * (exp.unitPrice || 0)), 0);
-    
-    // Calculate profit
-    const totalProfit = totalIncome - totalExpensesUsed;
+    // Calculate profit - FORMULA: INCOME - LAHAT NG EXPENSES
+    const totalProfit = totalIncome - totalExpenses;
     const profitMargin = totalIncome > 0 ? (totalProfit / totalIncome) * 100 : 0;
+    
+    console.log(`📈 Total Profit: ₱${totalProfit.toFixed(2)}`);
+    console.log(`📊 Profit Margin: ${profitMargin.toFixed(2)}%`);
+    console.log("=========================================");
+    
+    // Expenses breakdown
+    const expensesBreakdown = expenses.map(exp => ({
+      itemName: exp.itemName,
+      category: exp.category,
+      quantity: exp.quantity,
+      unit: exp.unit,
+      unitPrice: exp.unitPrice,
+      totalCost: exp.totalCost,
+      datePurchased: exp.datePurchased,
+    }));
     
     // Create and save profit/loss report
     const profitLossReport = new ProfitLoss({
       startDate: start,
       endDate: end,
       totalIncome,
-      totalExpensesUsed,
-      totalPurchased,
-      remainingInventoryValue,
+      totalExpenses: totalExpenses,
       totalProfit,
       profitMargin,
-      totalOrders,
-      averageOrderValue,
-      totalExpenseItems: uniqueExpensesBreakdown.length,
-      expensesUsedBreakdown: uniqueExpensesBreakdown,
+      totalOrders: orders.length,
+      averageOrderValue: orders.length > 0 ? totalIncome / orders.length : 0,
+      totalExpenseItems: expenses.length,
+      expensesBreakdown,
       orders: orders.map(o => o._id),
-      expenses: allExpenses.map(e => e._id),
+      expenses: expenses.map(e => e._id),
       reportType,
       generatedAt: new Date(),
     });
@@ -110,7 +95,7 @@ exports.generateProfitLoss = async (req, res) => {
       data: profitLossReport,
     });
   } catch (error) {
-    console.error("Error generating profit/loss:", error);
+    console.error("❌ Error generating profit/loss:", error);
     res.status(500).json({
       success: false,
       message: "Error generating profit/loss report",
@@ -231,29 +216,24 @@ exports.getAllTimeSummary = async (req, res) => {
     const orders = await Order.find({ orderStatus: "completed" });
     const expenses = await Expense.find({ isActive: true });
     
-    const totalIncome = orders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
-    const totalPurchased = expenses.reduce((sum, exp) => sum + (exp.totalCost || 0), 0);
-    
-    // Compute total expenses used - yung mga nagamit lang
-    let totalExpensesUsed = 0;
+    let totalIncome = 0;
     for (const order of orders) {
-      for (const item of order.items) {
-        if (item.totalCost > 0) {
-          totalExpensesUsed += item.totalCost;
-        }
-      }
+      totalIncome += order.totalAmount || 0;
     }
     
-    const totalProfit = totalIncome - totalExpensesUsed;
+    let totalExpenses = 0;
+    for (const expense of expenses) {
+      totalExpenses += expense.totalCost || 0;
+    }
+    
+    const totalProfit = totalIncome - totalExpenses;
     const profitMargin = totalIncome > 0 ? (totalProfit / totalIncome) * 100 : 0;
     
     res.json({
       success: true,
       data: {
         totalIncome,
-        totalExpensesUsed,
-        totalPurchased,
-        remainingInventoryValue: totalPurchased - totalExpensesUsed,
+        totalExpenses,
         totalProfit,
         profitMargin: profitMargin.toFixed(2) + "%",
         totalOrders: orders.length,
@@ -298,36 +278,33 @@ exports.generateDailyReport = async (req, res) => {
       createdAt: { $gte: startOfDay, $lte: endOfDay },
     });
     
-    const totalIncome = orders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
-    const totalOrders = orders.length;
-    
-    // Compute expenses used for today
-    let totalExpensesUsed = 0;
+    let totalIncome = 0;
     for (const order of orders) {
-      for (const item of order.items) {
-        if (item.totalCost > 0) {
-          totalExpensesUsed += item.totalCost;
-        }
-      }
+      totalIncome += order.totalAmount || 0;
     }
     
-    const allExpenses = await Expense.find({ isActive: true });
-    const totalPurchased = allExpenses.reduce((sum, exp) => sum + (exp.totalCost || 0), 0);
+    const expenses = await Expense.find({
+      isActive: true,
+      datePurchased: { $gte: startOfDay, $lte: endOfDay },
+    });
+    
+    let totalExpenses = 0;
+    for (const expense of expenses) {
+      totalExpenses += expense.totalCost || 0;
+    }
     
     const report = new ProfitLoss({
       startDate: startOfDay,
       endDate: endOfDay,
       totalIncome,
-      totalExpensesUsed,
-      totalPurchased,
-      remainingInventoryValue: totalPurchased - totalExpensesUsed,
-      totalProfit: totalIncome - totalExpensesUsed,
-      profitMargin: totalIncome > 0 ? ((totalIncome - totalExpensesUsed) / totalIncome) * 100 : 0,
-      totalOrders,
-      averageOrderValue: totalOrders > 0 ? totalIncome / totalOrders : 0,
-      totalExpenseItems: 0,
+      totalExpenses,
+      totalProfit: totalIncome - totalExpenses,
+      profitMargin: totalIncome > 0 ? ((totalIncome - totalExpenses) / totalIncome) * 100 : 0,
+      totalOrders: orders.length,
+      averageOrderValue: orders.length > 0 ? totalIncome / orders.length : 0,
+      totalExpenseItems: expenses.length,
       orders: orders.map(o => o._id),
-      expenses: [],
+      expenses: expenses.map(e => e._id),
       reportType: "daily",
     });
     
