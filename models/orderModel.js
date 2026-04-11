@@ -1,3 +1,4 @@
+// models/orderModel.js
 const mongoose = require("mongoose");
 
 const orderItemSchema = new mongoose.Schema({
@@ -12,7 +13,8 @@ const orderItemSchema = new mongoose.Schema({
   },
   pricePerQuantity: {
     type: Number,
-    required: true,
+    required: false,
+    default: 0,
     min: 0,
   },
   price: {
@@ -40,6 +42,19 @@ const orderItemSchema = new mongoose.Schema({
   itemId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "MenuItem",
+  },
+  expenseId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Expense",
+    default: null,
+  },
+  costPerUnit: {
+    type: Number,
+    default: 0,
+  },
+  totalCost: {
+    type: Number,
+    default: 0,
   },
 });
 
@@ -191,7 +206,6 @@ const orderSchema = new mongoose.Schema(
     orderNumber: {
       type: String,
       unique: true,
-      required: true,
     },
     orderId: {
       type: String,
@@ -251,13 +265,6 @@ const orderSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
-    // Remove the tableId field since you're using a string table field
-    // tableId: {
-    //   type: mongoose.Schema.Types.ObjectId,
-    //   ref: "Table",
-    //   default: null,
-    // },
-    // Table field - made optional (not required)
     table: {
       type: String,
       default: "",
@@ -266,6 +273,14 @@ const orderSchema = new mongoose.Schema(
       type: Number,
       required: true,
       min: 0,
+    },
+    totalCost: {
+      type: Number,
+      default: 0,
+    },
+    profit: {
+      type: Number,
+      default: 0,
     },
     cashAmount: {
       type: Number,
@@ -306,36 +321,16 @@ const orderSchema = new mongoose.Schema(
 // Generate order number before saving
 orderSchema.pre("save", async function (next) {
   if (this.isNew) {
-    // Generate order number if not provided
     if (!this.orderNumber) {
       const timestamp = Date.now();
       const randomSuffix = Math.floor(Math.random() * 1000);
       this.orderNumber = `ORD-${timestamp}-${randomSuffix}`;
     }
-
-    // Generate orderId if not provided
     if (!this.orderId) {
       const timestamp = Date.now();
       const randomSuffix = Math.floor(Math.random() * 10000);
       this.orderId = `order-${timestamp}-${randomSuffix}`;
     }
-
-    // Calculate totals from items if not provided
-    if (this.items && this.items.length > 0 && !this.totalAmount) {
-      const subtotal = this.items.reduce((sum, item) => {
-        if (item.isRedeemed) return sum;
-        return sum + (item.price || 0);
-      }, 0);
-
-      this.totalAmount = subtotal;
-
-      // Update bills if not set
-      if (!this.bills.totalWithTax) {
-        this.bills.totalWithTax = this.totalAmount;
-      }
-    }
-
-    // Set cashier name from user if available
     if (this.user && !this.cashier) {
       try {
         const User = mongoose.model("User");
@@ -349,55 +344,15 @@ orderSchema.pre("save", async function (next) {
     }
   }
 
-  // Calculate derived fields
-  if (this.isModified("totalAmount") || this.isModified("bills")) {
-    // Ensure bills object exists
-    if (!this.bills) {
-      this.bills = {};
-    }
-
-    // Calculate amount paid
-    this.amountPaid = (this.cashAmount || 0) + (this.onlineAmount || 0);
-
-    // Calculate remaining balance
-    if (this.isPartialPayment) {
-      this.remainingBalance = Math.max(0, this.totalAmount - this.amountPaid);
-    } else {
-      this.remainingBalance = 0;
-    }
-
-    // Calculate change
-    if (this.amountPaid > this.totalAmount) {
-      this.change = this.amountPaid - this.totalAmount;
-    } else {
-      this.change = 0;
-    }
-
-    // Update payment status based on payment
-    if (this.amountPaid >= this.totalAmount) {
-      this.paymentStatus = "completed";
-      this.isPartialPayment = false;
-      this.remainingBalance = 0;
-    } else if (this.amountPaid > 0 && this.amountPaid < this.totalAmount) {
-      this.paymentStatus = "partial";
-      this.isPartialPayment = true;
-    } else {
-      this.paymentStatus = "pending";
-    }
-
-    // Sync payment details with bills
-    if (this.paymentDetails) {
-      this.paymentDetails.cashAmount = this.cashAmount || 0;
-      this.paymentDetails.onlineAmount = this.onlineAmount || 0;
-      this.paymentDetails.isPartialPayment = this.isPartialPayment;
-      this.paymentDetails.remainingBalance = this.remainingBalance;
-    }
+  if (this.items && this.items.length > 0) {
+    this.totalCost = this.items.reduce((sum, item) => sum + (item.totalCost || 0), 0);
+    this.profit = (this.totalAmount || 0) - this.totalCost;
   }
 
   next();
 });
 
-// Virtual for formatted date
+// Virtuals
 orderSchema.virtual("formattedDate").get(function () {
   return this.createdAt.toLocaleDateString("en-US", {
     year: "numeric",
@@ -406,7 +361,6 @@ orderSchema.virtual("formattedDate").get(function () {
   });
 });
 
-// Virtual for formatted time
 orderSchema.virtual("formattedTime").get(function () {
   return this.createdAt.toLocaleTimeString("en-US", {
     hour: "2-digit",
@@ -414,88 +368,54 @@ orderSchema.virtual("formattedTime").get(function () {
   });
 });
 
-// Virtual for customer name (for backward compatibility)
 orderSchema.virtual("customerName").get(function () {
   return this.customerDetails?.name || "Walk-in Customer";
 });
 
-// Virtual for customer phone (for backward compatibility)
 orderSchema.virtual("customerPhone").get(function () {
   return this.customerDetails?.phone || "";
 });
 
-// Static method to find active orders
-orderSchema.statics.findActiveOrders = function () {
-  return this.find({
-    orderStatus: {
-      $in: ["pending", "processing", "in-progress", "confirmed", "preparing"],
-    },
-  }).sort({ createdAt: 1 });
-};
-
-// Static method to find completed orders
-orderSchema.statics.findCompletedOrders = function (startDate, endDate) {
-  const query = {
-    orderStatus: "completed",
-  };
-
-  if (startDate && endDate) {
-    query.createdAt = {
-      $gte: new Date(startDate),
-      $lte: new Date(endDate),
-    };
+// Static method for financial summary
+orderSchema.statics.getFinancialSummary = async function (startDate, endDate) {
+  const match = { orderStatus: "completed" };
+  
+  if (startDate || endDate) {
+    match.createdAt = {};
+    if (startDate) match.createdAt.$gte = new Date(startDate);
+    if (endDate) match.createdAt.$lte = new Date(endDate);
   }
 
-  return this.find(query).sort({ createdAt: -1 });
-};
-
-// Instance method to add item to order
-orderSchema.methods.addItem = function (itemData) {
-  this.items.push(itemData);
-
-  // Recalculate totals
-  const subtotal = this.items.reduce((sum, item) => {
-    if (item.isRedeemed) return sum;
-    return sum + (item.price || 0);
-  }, 0);
-
-  this.totalAmount = subtotal;
-  this.bills.totalWithTax = this.totalAmount;
-
-  return this.save();
-};
-
-// Instance method to update payment
-orderSchema.methods.updatePayment = function (paymentData) {
-  if (paymentData.cashAmount !== undefined) {
-    this.cashAmount = paymentData.cashAmount;
-  }
-
-  if (paymentData.onlineAmount !== undefined) {
-    this.onlineAmount = paymentData.onlineAmount;
-  }
-
-  if (paymentData.paymentMethod) {
-    this.paymentMethod = paymentData.paymentMethod;
-  }
-
-  if (paymentData.onlineMethod) {
-    this.bills.onlineMethod = paymentData.onlineMethod;
-    if (this.paymentDetails) {
-      this.paymentDetails.onlineMethod = paymentData.onlineMethod;
+  const summary = await this.aggregate([
+    { $match: match },
+    {
+      $group: {
+        _id: null,
+        totalRevenue: { $sum: "$totalAmount" },
+        totalCost: { $sum: "$totalCost" },
+        totalProfit: { $sum: "$profit" },
+        totalOrders: { $sum: 1 },
+        avgOrderValue: { $avg: "$totalAmount" },
+      }
     }
-  }
+  ]);
 
-  return this.save();
+  return summary[0] || {
+    totalRevenue: 0,
+    totalCost: 0,
+    totalProfit: 0,
+    totalOrders: 0,
+    avgOrderValue: 0,
+  };
 };
 
-// Indexes for better performance
+// Indexes
 orderSchema.index({ orderNumber: 1 });
 orderSchema.index({ orderStatus: 1 });
 orderSchema.index({ paymentStatus: 1 });
 orderSchema.index({ createdAt: -1 });
 orderSchema.index({ user: 1 });
 orderSchema.index({ "customerDetails.name": 1 });
-orderSchema.index({ table: 1 }); // Index for the new table field
+orderSchema.index({ table: 1 });
 
 module.exports = mongoose.model("Order", orderSchema);

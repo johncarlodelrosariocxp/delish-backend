@@ -1,3 +1,4 @@
+// app.js
 const express = require("express");
 const connectDB = require("./config/database");
 const config = require("./config/config");
@@ -6,13 +7,14 @@ const cookieParser = require("cookie-parser");
 const cors = require("cors");
 
 // Route imports
-const inventoryRoutes = require("./routes/inventory");
 const userRoutes = require("./routes/userRoute");
 const orderRoutes = require("./routes/orderRoute");
 const tableRoutes = require("./routes/tableRoute");
 const paymentRoutes = require("./routes/paymentRoute");
 const salesRoutes = require("./routes/salesRoute");
-const menuRoutes = require("./routes/menuRoutes"); // ADDED: Menu routes
+const menuRoutes = require("./routes/menuRoutes");
+const expenseRoutes = require("./routes/expenseRoutes");
+const profitLossRoutes = require("./routes/profitLossRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 8000;
@@ -20,7 +22,7 @@ const PORT = process.env.PORT || 8000;
 // Connect to database
 connectDB();
 
-// Enhanced CORS configuration for production
+// CORS configuration
 const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:5173",
@@ -30,12 +32,9 @@ const allowedOrigins = [
   "https://delish-pos-final.vercel.app",
 ];
 
-// Create custom CORS middleware
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
@@ -46,32 +45,18 @@ const corsOptions = {
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   allowedHeaders: [
-    "Content-Type",
-    "Authorization",
-    "Cookie",
-    "X-Requested-With",
-    "x-access-token",
-    "Accept",
-    "x-frontend-source",
-    "x-frontend-url",
-    "X-Frontend-Source",
-    "X-Frontend-URL",
-    "Access-Control-Allow-Origin",
-    "Access-Control-Allow-Headers",
-    "Access-Control-Allow-Methods",
+    "Content-Type", "Authorization", "Cookie", "X-Requested-With",
+    "x-access-token", "Accept", "x-frontend-source", "x-frontend-url",
+    "X-Frontend-Source", "X-Frontend-URL", "Access-Control-Allow-Origin",
+    "Access-Control-Allow-Headers", "Access-Control-Allow-Methods",
   ],
   exposedHeaders: ["set-cookie", "Authorization"],
   preflightContinue: false,
   optionsSuccessStatus: 204,
 };
 
-// Apply CORS middleware
 app.use(cors(corsOptions));
-
-// Handle preflight requests
 app.options("*", cors(corsOptions));
-
-// Body parsing middleware
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
@@ -83,7 +68,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Add CORS headers manually for all responses
+// CORS headers middleware
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (allowedOrigins.includes(origin)) {
@@ -130,7 +115,6 @@ app.get("/api/debug/orders", async (req, res) => {
       success: true,
       count: orders.length,
       orders: orders,
-      database: process.env.MONGODB_URI ? "Connected" : "Not connected",
     });
   } catch (error) {
     console.error("❌ Debug orders error:", error);
@@ -138,22 +122,61 @@ app.get("/api/debug/orders", async (req, res) => {
   }
 });
 
-// Debug payments endpoint
-app.get("/api/debug/payments", async (req, res) => {
+// Debug expenses endpoint
+app.get("/api/debug/expenses", async (req, res) => {
   try {
-    const Payment = require("./models/paymentModel");
-    const payments = await Payment.find({})
-      .populate("user", "name email role")
-      .sort({ createdAt: -1 })
-      .lean();
+    const Expense = require("./models/Expense");
+    const expenses = await Expense.find({}).sort({ datePurchased: -1 }).lean();
+    const totalPurchased = expenses.reduce((sum, exp) => sum + (exp.totalCost || 0), 0);
+    const totalUsed = expenses.reduce((sum, exp) => sum + ((exp.usedQuantity || 0) * (exp.unitPrice || 0)), 0);
+    const totalRemaining = expenses.reduce((sum, exp) => sum + ((exp.remainingQuantity || 0) * (exp.unitPrice || 0)), 0);
 
     res.json({
       success: true,
-      count: payments.length,
-      payments: payments,
+      count: expenses.length,
+      summary: {
+        totalPurchased: totalPurchased,
+        totalUsed: totalUsed,
+        totalRemaining: totalRemaining,
+      },
+      expenses: expenses,
     });
   } catch (error) {
-    console.error("❌ Debug payments error:", error);
+    console.error("❌ Debug expenses error:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Debug profit/loss endpoint
+app.get("/api/debug/profit-loss", async (req, res) => {
+  try {
+    const Order = require("./models/orderModel");
+    const Expense = require("./models/Expense");
+
+    const orders = await Order.find({ orderStatus: "completed" });
+    const totalIncome = orders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
+
+    const expenses = await Expense.find({ isActive: true });
+    const totalExpensesUsed = expenses.reduce((sum, exp) => sum + ((exp.usedQuantity || 0) * (exp.unitPrice || 0)), 0);
+    const totalPurchased = expenses.reduce((sum, exp) => sum + (exp.totalCost || 0), 0);
+
+    const totalProfit = totalIncome - totalExpensesUsed;
+    const profitMargin = totalIncome > 0 ? (totalProfit / totalIncome) * 100 : 0;
+
+    res.json({
+      success: true,
+      data: {
+        totalIncome: totalIncome,
+        totalExpensesUsed: totalExpensesUsed,
+        totalPurchased: totalPurchased,
+        remainingInventoryValue: totalPurchased - totalExpensesUsed,
+        totalProfit: totalProfit,
+        profitMargin: profitMargin.toFixed(2) + "%",
+        totalOrders: orders.length,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Debug profit/loss error:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -162,27 +185,18 @@ app.get("/api/debug/payments", async (req, res) => {
 app.get("/api/debug/database", async (req, res) => {
   try {
     const mongoose = require("mongoose");
-    const collections = await mongoose.connection.db
-      .listCollections()
-      .toArray();
-
+    const collections = await mongoose.connection.db.listCollections().toArray();
     const collectionCounts = {};
 
     for (const collection of collections) {
-      const Model =
-        mongoose.models[collection.name] ||
-        mongoose.model(
-          collection.name,
-          new mongoose.Schema({}, { strict: false })
-        );
+      const Model = mongoose.models[collection.name] || mongoose.model(collection.name, new mongoose.Schema({}, { strict: false }));
       const count = await Model.countDocuments();
       collectionCounts[collection.name] = count;
     }
 
     res.json({
       success: true,
-      database:
-        mongoose.connection.readyState === 1 ? "Connected" : "Disconnected",
+      database: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected",
       connectionState: mongoose.connection.readyState,
       collections: collections.map((c) => c.name),
       counts: collectionCounts,
@@ -193,213 +207,8 @@ app.get("/api/debug/database", async (req, res) => {
   }
 });
 
-// FIXED: Create test data endpoint that matches your Order model
-app.post("/api/test/create-orders", async (req, res) => {
-  try {
-    const Order = require("./models/orderModel");
-    const User = require("./models/userModel");
-    const Table = require("./models/tableModel");
+// ==================== USER MANAGEMENT ENDPOINTS ====================
 
-    // Get or create test user
-    let user = await User.findOne({ email: "admin@delish.com" });
-    if (!user) {
-      const bcrypt = require("bcrypt");
-      const hashedPassword = await bcrypt.hash("admin123", 10);
-      user = await User.create({
-        name: "Admin User",
-        email: "admin@delish.com",
-        phone: "1234567890",
-        password: hashedPassword,
-        role: "admin",
-      });
-    }
-
-    // Get or create test table
-    let table = await Table.findOne({ tableNumber: "T1" });
-    if (!table) {
-      table = await Table.create({
-        tableNumber: "T1",
-        capacity: 4,
-        status: "available",
-      });
-    }
-
-    // Create test orders with the CORRECT structure matching your Order model
-    const testOrdersData = [
-      {
-        user: user._id,
-        table: table._id,
-        customerDetails: {
-          name: "John Doe",
-          phone: "1234567890",
-          guests: 2,
-        },
-        items: [
-          { name: "Burger", quantity: 2, price: 150, total: 300 },
-          { name: "Fries", quantity: 1, price: 80, total: 80 },
-        ],
-        bills: {
-          total: 380,
-          tax: 38,
-          totalWithTax: 418,
-        },
-        orderStatus: "completed",
-        paymentMethod: "cash",
-        paymentStatus: "paid",
-        notes: "Test order 1",
-      },
-      {
-        user: user._id,
-        table: table._id,
-        customerDetails: {
-          name: "Jane Smith",
-          phone: "0987654321",
-          guests: 4,
-        },
-        items: [
-          { name: "Pizza", quantity: 1, price: 250, total: 250 },
-          { name: "Coke", quantity: 2, price: 50, total: 100 },
-        ],
-        bills: {
-          total: 350,
-          tax: 35,
-          totalWithTax: 385,
-        },
-        orderStatus: "preparing",
-        paymentMethod: "card",
-        paymentStatus: "pending",
-        notes: "Test order 2",
-      },
-      {
-        user: user._id,
-        table: table._id,
-        customerDetails: {
-          name: "Bob Wilson",
-          phone: "5551234567",
-          guests: 1,
-        },
-        items: [{ name: "Pasta", quantity: 3, price: 180, total: 540 }],
-        bills: {
-          total: 540,
-          tax: 54,
-          totalWithTax: 594,
-        },
-        orderStatus: "served",
-        paymentMethod: "online",
-        paymentStatus: "paid",
-        notes: "Test order 3",
-      },
-    ];
-
-    const orders = await Order.create(testOrdersData);
-
-    // Populate the created orders
-    const populatedOrders = await Order.find({
-      _id: { $in: orders.map((o) => o._id) },
-    })
-      .populate("user", "name email role")
-      .populate("table", "tableNumber");
-
-    res.json({
-      success: true,
-      message: "Test orders created successfully",
-      count: populatedOrders.length,
-      orders: populatedOrders,
-    });
-  } catch (error) {
-    console.error("❌ Test data error:", error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      details: error.errors,
-    });
-  }
-});
-
-// Quick order test endpoint with minimal data
-app.post("/api/test/simple-order", async (req, res) => {
-  try {
-    const Order = require("./models/orderModel");
-    const User = require("./models/userModel");
-
-    // Get any user
-    const user = await User.findOne();
-
-    if (!user) {
-      return res.status(400).json({
-        success: false,
-        message: "No users found. Create a user first.",
-      });
-    }
-
-    // Create simple test order with all required fields
-    const order = await Order.create({
-      user: user._id,
-      customerDetails: {
-        name: "Test Customer",
-        phone: "1234567890",
-        guests: 1,
-      },
-      items: [
-        {
-          name: "Test Item",
-          quantity: 1,
-          price: 100,
-          total: 100,
-        },
-      ],
-      bills: {
-        total: 100,
-        tax: 10,
-        totalWithTax: 110,
-      },
-      orderStatus: "pending",
-      paymentMethod: "cash",
-      paymentStatus: "pending",
-      notes: "Simple test order",
-    });
-
-    res.json({
-      success: true,
-      message: "Test order created",
-      order: await Order.findById(order._id).populate("user", "name email"),
-    });
-  } catch (error) {
-    console.error("❌ Simple order error:", error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      details: error.errors,
-    });
-  }
-});
-
-// Clear all test data
-app.delete("/api/test/clear-data", async (req, res) => {
-  try {
-    const Order = require("./models/orderModel");
-    const Payment = require("./models/paymentModel");
-
-    const [ordersDeleted, paymentsDeleted] = await Promise.all([
-      Order.deleteMany({}),
-      Payment.deleteMany({}),
-    ]);
-
-    res.json({
-      success: true,
-      message: "Test data cleared",
-      deleted: {
-        orders: ordersDeleted.deletedCount,
-        payments: paymentsDeleted.deletedCount,
-      },
-    });
-  } catch (error) {
-    console.error("❌ Clear data error:", error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Enhanced user management endpoints
 app.post("/api/force-create-user", async (req, res) => {
   try {
     const User = require("./models/userModel");
@@ -409,10 +218,8 @@ app.post("/api/force-create-user", async (req, res) => {
 
     console.log("🚨 FORCE CREATING USER:", email);
 
-    // Delete existing user first
     await User.deleteOne({ email });
 
-    // Create new user
     const hashedPassword = await bcrypt.hash(password, 10);
     const newUser = new User({
       name: name || "Admin User",
@@ -425,9 +232,6 @@ app.post("/api/force-create-user", async (req, res) => {
     await newUser.save();
     console.log("✅ USER CREATED:", email);
 
-    // Verify creation
-    const verifyUser = await User.findOne({ email });
-
     res.json({
       success: true,
       message: `User created successfully: ${email}`,
@@ -436,7 +240,6 @@ app.post("/api/force-create-user", async (req, res) => {
         email: newUser.email,
         role: newUser.role,
       },
-      verified: !!verifyUser,
     });
   } catch (error) {
     console.error("❌ Error creating user:", error);
@@ -490,188 +293,146 @@ app.get("/api/debug-users", async (req, res) => {
   }
 });
 
-// Root endpoint with complete API documentation
+// ==================== ROOT ENDPOINT ====================
+
 app.get("/", (req, res) => {
   res.json({
     message: "✅ Delish POS Server is running!",
     server: {
       port: PORT,
       environment: process.env.NODE_ENV || "development",
-      baseURL: `https://${req.headers.host}`,
-    },
-    cors: {
-      configured: true,
-      allowedOrigins: allowedOrigins,
-      allowedHeaders: corsOptions.allowedHeaders,
     },
     endpoints: {
       health: "GET /health",
-      debug: {
-        orders: "GET /api/debug/orders",
-        payments: "GET /api/debug/payments",
-        database: "GET /api/debug/database",
-        users: "GET /api/debug-users",
-      },
-      test: {
-        createOrders: "POST /api/test/create-orders",
-        simpleOrder: "POST /api/test/simple-order",
-        clearData: "DELETE /api/test/clear-data",
-      },
       auth: {
-        register: "POST /api/user/register",
         login: "POST /api/user/login",
+        register: "POST /api/user/register",
         logout: "POST /api/user/logout",
         profile: "GET /api/user/me",
       },
-      sales: {
-        all: "GET /api/sales",
-        today: "GET /api/sales/today",
-        stats: "GET /api/sales/stats",
-        range: "GET /api/sales/range",
-        reports: "GET /api/sales/reports",
+      expenses: {
+        list: "GET /api/expenses",
+        add: "POST /api/expenses",
+        update: "PUT /api/expenses/:id",
+        delete: "DELETE /api/expenses/:id",
+        profitLoss: "GET /api/expenses/profit-loss",
+        inventoryValue: "GET /api/expenses/inventory-value",
+      },
+      profitLoss: {
+        generate: "POST /api/profit-loss/generate",
+        generateDaily: "POST /api/profit-loss/generate-daily",
+        latest: "GET /api/profit-loss/latest",
+        summary: "GET /api/profit-loss/summary",
+        all: "GET /api/profit-loss",
+        byId: "GET /api/profit-loss/:id",
+        delete: "DELETE /api/profit-loss/:id",
       },
       orders: {
-        create: "POST /api/order",
         list: "GET /api/order",
-        single: "GET /api/order/:id",
+        create: "POST /api/order",
         update: "PUT /api/order/:id",
-        delete: "DELETE /api/order/:id",
         stats: "GET /api/order/stats",
       },
-      tables: {
-        create: "POST /api/table",
-        list: "GET /api/table",
-        update: "PUT /api/table/:id",
-      },
-      payments: {
-        create: "POST /api/payment/create-order",
-        verify: "POST /api/payment/verify-payment",
-        list: "GET /api/payment",
-        stats: "GET /api/payment/stats",
-      },
-      inventory: {
-        list: "GET /api/inventory",
-        create: "POST /api/inventory",
-        update: "PUT /api/inventory/:id",
-        delete: "DELETE /api/inventory/:id",
-        lowStock: "GET /api/inventory/low-stock",
-      },
-      menu: { // ADDED: Menu endpoints documentation
-        all: "GET /api/menu",
+      menu: {
+        list: "GET /api/menu",
         byTag: "GET /api/menu/tag/:tag",
         byId: "GET /api/menu/:id",
-        items: "GET /api/menu/:menuId/items",
-        item: "GET /api/menu/:menuId/items/:itemId",
-        cheesecakeFlavors: "GET /api/menu/cheesecake/flavors",
-        cheesecakeFlavorsByCategory: "GET /api/menu/cheesecake/flavors/category/:category",
-        import: "POST /api/menu/import (admin)",
-        create: "POST /api/menu (admin)",
-        update: "PUT /api/menu/:id (admin)",
-        delete: "DELETE /api/menu/:id (admin)",
-        createItem: "POST /api/menu/:menuId/items (admin)",
-        updateItem: "PUT /api/menu/:menuId/items/:itemId (admin)",
-        deleteItem: "DELETE /api/menu/:menuId/items/:itemId (admin)",
-        createFlavor: "POST /api/menu/cheesecake/flavors (admin)",
-        updateFlavor: "PUT /api/menu/cheesecake/flavors/:id (admin)",
-        deleteFlavor: "DELETE /api/menu/cheesecake/flavors/:id (admin)",
+      },
+      tables: {
+        list: "GET /api/table",
+        create: "POST /api/table",
+        update: "PUT /api/table/:id",
+      },
+      sales: {
+        list: "GET /api/sales",
+        today: "GET /api/sales/today",
+        stats: "GET /api/sales/stats",
+      },
+      debug: {
+        orders: "GET /api/debug/orders",
+        expenses: "GET /api/debug/expenses",
+        profitLoss: "GET /api/debug/profit-loss",
+        database: "GET /api/debug/database",
+        users: "GET /api/debug-users",
       },
       admin: {
-        emergency: {
-          createUser: "POST /api/force-create-user",
-          deleteUsers: "DELETE /api/nuke-users",
-          listUsers: "GET /api/debug-users",
-        },
+        createUser: "POST /api/force-create-user",
+        deleteUsers: "DELETE /api/nuke-users",
       },
     },
-    quickStart: [
-      "1. POST /api/force-create-user (create admin user)",
-      "2. POST /api/test/simple-order (create test order)",
-      "3. POST /api/user/login (login with credentials)",
-      "4. GET /api/menu (view all menus)",
-      "5. Access protected endpoints with returned token",
-    ],
     timestamp: new Date().toISOString(),
   });
 });
 
-// API Routes
+// ==================== API ROUTES ====================
 app.use("/api/user", userRoutes);
 app.use("/api/order", orderRoutes);
 app.use("/api/table", tableRoutes);
 app.use("/api/payment", paymentRoutes);
-app.use("/api/inventory", inventoryRoutes);
+app.use("/api/expenses", expenseRoutes);
 app.use("/api/sales", salesRoutes);
-app.use("/api/menu", menuRoutes); // ADDED: Menu routes
+app.use("/api/menu", menuRoutes);
+app.use("/api/profit-loss", profitLossRoutes);
 
 // Global Error Handler
 app.use(globalErrorHandler);
 
 // 404 Handler
 app.use((req, res) => {
-  // Check if it's a common mistake
-  const commonMistakes = {
-    "/api/login": "/api/user/login",
-    "/api/register": "/api/user/register",
-    "/api/logout": "/api/user/logout",
-    "/api/me": "/api/user/me",
-  };
-
-  const suggestedPath = commonMistakes[req.path];
-  const suggestion = suggestedPath
-    ? `Did you mean: ${req.method} ${suggestedPath}?`
-    : "Check the available endpoints below";
-
   res.status(404).json({
     success: false,
     message: "Route not found",
     path: req.path,
     method: req.method,
-    suggestion: suggestion,
     availableEndpoints: [
-      "GET /health",
-      "GET /api/debug/orders",
-      "GET /api/debug/payments",
-      "GET /api/debug/database",
-      "POST /api/test/create-orders",
-      "POST /api/test/simple-order",
-      "POST /api/force-create-user",
-      "POST /api/user/register",
       "POST /api/user/login",
-      "GET /api/sales",
-      "GET /api/sales/today",
-      "GET /api/sales/stats",
-      "POST /api/order",
+      "POST /api/user/register",
+      "GET /api/user/me",
+      "GET /api/expenses",
+      "POST /api/expenses",
+      "GET /api/expenses/profit-loss",
+      "GET /api/expenses/inventory-value",
+      "POST /api/profit-loss/generate",
+      "GET /api/profit-loss/latest",
+      "GET /api/profit-loss/summary",
       "GET /api/order",
-      "GET /api/inventory",
-      "GET /api/menu", // ADDED
-      "GET /api/menu/tag/food", // ADDED
-      "GET /api/menu/tag/drink", // ADDED
-      "GET /api/menu/cheesecake/flavors", // ADDED
+      "POST /api/order",
+      "GET /api/menu",
+      "GET /api/table",
+      "GET /api/sales",
     ],
   });
 });
 
-// Start Server
+// ==================== START SERVER ====================
 const server = app.listen(PORT, () => {
   console.log(`\n🎉 🚀 DELISH POS BACKEND SERVER STARTED!`);
   console.log(`=========================================`);
   console.log(`📍 Port: ${PORT}`);
   console.log(`🌐 Environment: ${process.env.NODE_ENV || "development"}`);
-  console.log(`🕒 Started: ${new Date().toISOString()}`);
-  console.log(`🌍 Allowed Origins: ${allowedOrigins.join(", ")}`);
   console.log(`=========================================\n`);
-  console.log(`🔍 DEBUG ENDPOINTS AVAILABLE:`);
-  console.log(`   GET  /api/debug/orders`);
-  console.log(`   GET  /api/debug/payments`);
-  console.log(`   GET  /api/debug/database`);
-  console.log(`   POST /api/test/simple-order`);
-  console.log(`   POST /api/force-create-user`);
+  console.log(`💰 EXPENSE & PROFIT TRACKING SYSTEM READY`);
+  console.log(`   GET  /api/expenses - View all expenses`);
+  console.log(`   POST /api/expenses - Add new expense`);
+  console.log(`   GET  /api/expenses/profit-loss - View profit report`);
+  console.log(`   GET  /api/expenses/inventory-value - View remaining stock value`);
   console.log(`=========================================\n`);
-  console.log(`📋 MENU MANAGEMENT ENDPOINTS:`);
-  console.log(`   GET  /api/menu - Get all menus`);
-  console.log(`   GET  /api/menu/tag/food - Get food menus`);
-  console.log(`   GET  /api/menu/tag/drink - Get drink menus`);
-  console.log(`   GET  /api/menu/cheesecake/flavors - Get cheesecake flavors`);
+  console.log(`📊 PROFIT/LOSS REPORT ENDPOINTS:`);
+  console.log(`   POST /api/profit-loss/generate - Generate custom report`);
+  console.log(`   POST /api/profit-loss/generate-daily - Generate daily report`);
+  console.log(`   GET  /api/profit-loss/latest - Get latest report`);
+  console.log(`   GET  /api/profit-loss/summary - Get all-time summary`);
+  console.log(`   GET  /api/profit-loss - Get all reports`);
+  console.log(`=========================================\n`);
+  console.log(`📋 MENU & ORDERS:`);
+  console.log(`   GET  /api/menu - View menu items`);
+  console.log(`   GET  /api/order - View orders`);
+  console.log(`   POST /api/order - Create new order`);
+  console.log(`=========================================\n`);
+  console.log(`🔧 DEBUG ENDPOINTS:`);
+  console.log(`   GET  /api/debug/expenses - Debug expenses`);
+  console.log(`   GET  /api/debug/profit-loss - Quick profit check`);
+  console.log(`   GET  /api/debug/orders - Debug orders`);
   console.log(`=========================================\n`);
 });
 

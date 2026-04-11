@@ -1,36 +1,98 @@
+// controllers/orderController.js
 const createHttpError = require("http-errors");
 const Order = require("../models/orderModel");
-const { default: mongoose } = require("mongoose");
+const Expense = require("../models/Expense");
+const mongoose = require("mongoose");
 
 const addOrder = async (req, res, next) => {
   try {
-    // Determine which user to assign the order to
-    let assignedUserId = req.user._id; // Default to logged-in user
+    let assignedUserId = req.user._id;
 
-    // If the frontend sends a user field and the requester is admin, use it
     if (req.body.user && req.user.role === "admin") {
       assignedUserId = req.body.user;
     }
 
+    const processedItems = [];
+    let totalOrderCost = 0;
+    let totalRevenue = 0;
+    const usedExpensesList = [];
+
+    for (const item of req.body.items) {
+      // Hanapin ang expense item na may natitirang stock
+      const expenseItem = await Expense.findOne({ 
+        itemName: { $regex: new RegExp(`^${item.name}$`, "i") },
+        isActive: true,
+        remainingQuantity: { $gt: 0 }
+      });
+
+      let costPerUnit = 0;
+      let expenseId = null;
+      let actualCost = 0;
+
+      if (expenseItem) {
+        // Gamitin ang stock mula sa expense
+        const usedStock = await expenseItem.useStock(item.quantity);
+        costPerUnit = usedStock.costPerUnit;
+        expenseId = expenseItem._id;
+        actualCost = usedStock.totalCost;
+        
+        usedExpensesList.push(usedStock);
+      }
+
+      const itemTotalCost = actualCost;
+      const itemPrice = item.price || item.pricePerQuantity || 0;
+      const itemRevenue = itemPrice * item.quantity;
+      
+      totalOrderCost += itemTotalCost;
+      totalRevenue += itemRevenue;
+
+      processedItems.push({
+        name: item.name,
+        quantity: item.quantity,
+        pricePerQuantity: item.pricePerQuantity || itemPrice,
+        price: itemPrice,
+        originalPrice: item.originalPrice || itemPrice,
+        isRedeemed: item.isRedeemed || false,
+        isPwdSeniorDiscounted: item.isPwdSeniorDiscounted || false,
+        category: item.category || "other",
+        expenseId: expenseId,
+        costPerUnit: costPerUnit,
+        totalCost: itemTotalCost,
+      });
+    }
+
+    const totalAmount = totalRevenue;
+    const profit = totalAmount - totalOrderCost;
+
     const orderData = {
       ...req.body,
-      user: assignedUserId, // Use the determined user ID
+      items: processedItems,
+      user: assignedUserId,
+      totalAmount: totalAmount,
+      totalCost: totalOrderCost,
+      profit: profit,
     };
 
     const order = new Order(orderData);
     await order.save();
 
-    // Populate the saved order with user details
     const populatedOrder = await Order.findById(order._id)
       .populate("table")
       .populate("user", "name email role");
 
     res.status(201).json({
       success: true,
-      message: "Order created!",
+      message: "Order created! Stock deducted from expenses!",
       data: populatedOrder,
+      summary: {
+        revenue: totalAmount,
+        cost: totalOrderCost,
+        profit: profit,
+        usedExpenses: usedExpensesList
+      }
     });
   } catch (error) {
+    console.error("Error creating order:", error);
     next(error);
   }
 };
@@ -46,16 +108,14 @@ const getOrderById = async (req, res, next) => {
 
     let order;
 
-    // Admin can see any order
     if (req.user.role === "admin") {
       order = await Order.findOne({ _id: id })
         .populate("table")
         .populate("user", "name email role");
     } else {
-      // Cashiers and regular users can only see their own orders
       order = await Order.findOne({
         _id: id,
-        user: req.user._id, // Cashier can only see orders they created
+        user: req.user._id,
       }).populate("table");
     }
 
@@ -75,17 +135,13 @@ const getOrders = async (req, res, next) => {
     let query = {};
     let populateOptions = ["table"];
 
-    // Admin can see all orders and see user details
     if (req.user.role === "admin") {
       query = {};
       populateOptions = ["table", { path: "user", select: "name email role" }];
     } else {
-      // Cashiers and regular users can only see their own orders
-      // This allows cashiers to see ALL their historical records
       query = { user: req.user._id };
     }
 
-    // ✅ FIXED: NO LIMIT - Returns ALL orders
     const orders = await Order.find(query)
       .populate(populateOptions)
       .sort({ createdAt: -1 });
@@ -113,13 +169,11 @@ const updateOrder = async (req, res, next) => {
 
     let order;
 
-    // Admin can update any order
     if (req.user.role === "admin") {
       order = await Order.findByIdAndUpdate(id, { orderStatus }, { new: true })
         .populate("table")
         .populate("user", "name email role");
     } else {
-      // Cashiers and regular users can only update their own orders
       order = await Order.findOneAndUpdate(
         { _id: id, user: req.user._id },
         { orderStatus },
@@ -142,16 +196,13 @@ const updateOrder = async (req, res, next) => {
   }
 };
 
-// Get order statistics for logged-in user
 const getOrderStats = async (req, res, next) => {
   try {
     let matchQuery = {};
 
-    // Admin sees stats for all orders
     if (req.user.role === "admin") {
       matchQuery = {};
     } else {
-      // Cashiers and regular users see stats only for their orders
       matchQuery = { user: req.user._id };
     }
 
@@ -162,25 +213,21 @@ const getOrderStats = async (req, res, next) => {
       {
         $group: {
           _id: null,
-          totalRevenue: { $sum: "$bills.totalWithTax" },
-          totalTax: { $sum: "$bills.tax" },
-          totalWithoutTax: { $sum: "$bills.total" },
-          averageOrderValue: { $avg: "$bills.totalWithTax" },
+          totalRevenue: { $sum: "$totalAmount" },
+          totalCost: { $sum: "$totalCost" },
+          totalProfit: { $sum: "$profit" },
+          averageOrderValue: { $avg: "$totalAmount" },
         },
       },
     ]);
 
-    const stats =
-      revenueStats.length > 0
-        ? revenueStats[0]
-        : {
-            totalRevenue: 0,
-            totalTax: 0,
-            totalWithoutTax: 0,
-            averageOrderValue: 0,
-          };
+    const stats = revenueStats.length > 0 ? revenueStats[0] : {
+      totalRevenue: 0,
+      totalCost: 0,
+      totalProfit: 0,
+      averageOrderValue: 0,
+    };
 
-    // Get today's orders
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const todayOrders = await Order.countDocuments({
@@ -188,7 +235,6 @@ const getOrderStats = async (req, res, next) => {
       createdAt: { $gte: today },
     });
 
-    // Get orders by status
     const statusStats = await Order.aggregate([
       { $match: matchQuery },
       {
@@ -199,7 +245,6 @@ const getOrderStats = async (req, res, next) => {
       },
     ]);
 
-    // Get daily sales for the last 30 days (extended for cashier to see more history)
     const last30Days = new Date();
     last30Days.setDate(last30Days.getDate() - 30);
 
@@ -215,30 +260,7 @@ const getOrderStats = async (req, res, next) => {
           _id: {
             $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
           },
-          totalSales: { $sum: "$bills.totalWithTax" },
-          orderCount: { $sum: 1 },
-        },
-      },
-      { $sort: { _id: 1 } },
-    ]);
-
-    // Get monthly sales for the last 6 months (for historical view)
-    const last6Months = new Date();
-    last6Months.setMonth(last6Months.getMonth() - 6);
-
-    const monthlySales = await Order.aggregate([
-      {
-        $match: {
-          ...matchQuery,
-          createdAt: { $gte: last6Months },
-        },
-      },
-      {
-        $group: {
-          _id: {
-            $dateToString: { format: "%Y-%m", date: "$createdAt" },
-          },
-          totalSales: { $sum: "$bills.totalWithTax" },
+          totalSales: { $sum: "$totalAmount" },
           orderCount: { $sum: 1 },
         },
       },
@@ -253,7 +275,6 @@ const getOrderStats = async (req, res, next) => {
         ...stats,
         statusDistribution: statusStats,
         dailySales: dailySales,
-        monthlySales: monthlySales,
       },
     });
   } catch (error) {
@@ -261,30 +282,15 @@ const getOrderStats = async (req, res, next) => {
   }
 };
 
-// 🔐 ADMIN ONLY - Get all orders from all users
 const getAllOrdersAdmin = async (req, res, next) => {
   try {
-    // Check if user is admin
     if (req.user.role !== "admin") {
       return next(createHttpError(403, "Access denied. Admin only."));
     }
 
-    // ✅ FIXED: Get query parameters for optional pagination
-    const {
-      page,
-      limit = 5000, // Very high limit to get all orders
-      startDate,
-      endDate,
-      status,
-      paymentMethod,
-      customerName,
-      orderId,
-    } = req.query;
-
-    // Build query
+    const { page, limit = 100, startDate, endDate, status } = req.query;
     let query = {};
 
-    // Date filtering
     if (startDate || endDate) {
       query.createdAt = {};
       if (startDate) {
@@ -299,114 +305,63 @@ const getAllOrdersAdmin = async (req, res, next) => {
       }
     }
 
-    // Status filtering
     if (status) {
       query.orderStatus = status;
     }
 
-    // Payment method filtering
-    if (paymentMethod) {
-      query.paymentMethod = paymentMethod;
-    }
-
-    // Customer name filtering (search in populated user)
-    if (customerName) {
-      // This will be handled after population
-    }
-
-    // Order ID filtering
-    if (orderId) {
-      query._id = new mongoose.Types.ObjectId(orderId);
-    }
-
-    // Get total count
     const total = await Order.countDocuments(query);
+    const skip = page ? (parseInt(page) - 1) * parseInt(limit) : 0;
 
-    // ✅ FIXED: Create base query without limit
-    let findQuery = Order.find(query)
+    const orders = await Order.find(query)
       .populate("table")
       .populate("user", "name email phone role")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
 
-    // Apply pagination only if explicitly requested
-    if (page && limit) {
-      const skip = (parseInt(page) - 1) * parseInt(limit);
-      findQuery = findQuery.skip(skip).limit(parseInt(limit));
-    } else {
-      // No pagination - return ALL orders
-      findQuery = findQuery.limit(parseInt(limit) || 5000);
-    }
-
-    const orders = await findQuery;
-
-    // Calculate summary stats
     const stats = await Order.aggregate([
       { $match: query },
       {
         $group: {
           _id: null,
-          totalRevenue: { $sum: "$bills.totalWithTax" },
+          totalRevenue: { $sum: "$totalAmount" },
+          totalCost: { $sum: "$totalCost" },
+          totalProfit: { $sum: "$profit" },
           totalOrders: { $sum: 1 },
-          avgOrderValue: { $avg: "$bills.totalWithTax" },
-          totalTax: { $sum: "$bills.tax" },
-          totalDiscount: { $sum: "$bills.discount" },
+          avgOrderValue: { $avg: "$totalAmount" },
         },
       },
     ]);
 
-    // Filter by customer name after population if needed
-    let filteredOrders = orders;
-    if (customerName) {
-      filteredOrders = orders.filter((order) => {
-        const user = order.user;
-        return (
-          user &&
-          user.name &&
-          user.name.toLowerCase().includes(customerName.toLowerCase())
-        );
-      });
-    }
-
     res.status(200).json({
       success: true,
-      data: filteredOrders,
-      summary:
-        stats.length > 0
-          ? stats[0]
-          : {
-              totalRevenue: 0,
-              totalOrders: 0,
-              avgOrderValue: 0,
-              totalTax: 0,
-              totalDiscount: 0,
-            },
-      total: filteredOrders.length,
+      data: orders,
+      summary: stats.length > 0 ? stats[0] : {
+        totalRevenue: 0,
+        totalCost: 0,
+        totalProfit: 0,
+        totalOrders: 0,
+        avgOrderValue: 0,
+      },
+      total: orders.length,
       allOrdersCount: total,
-      message:
-        page && limit
-          ? `Showing ${filteredOrders.length} of ${total} orders (page ${page})`
-          : `Retrieved ${filteredOrders.length} orders`,
     });
   } catch (error) {
     next(error);
   }
 };
 
-// 🔐 ADMIN ONLY - Get all sales statistics
 const getAllSalesStats = async (req, res, next) => {
   try {
-    // Check if user is admin
     if (req.user.role !== "admin") {
       return next(createHttpError(403, "Access denied. Admin only."));
     }
 
-    // Get today's date range
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    // Get this week and last week for comparison
     const startOfWeek = new Date(today);
     startOfWeek.setDate(today.getDate() - today.getDay());
     const endOfWeek = new Date(startOfWeek);
@@ -427,93 +382,45 @@ const getAllSalesStats = async (req, res, next) => {
       weekRevenue,
       lastWeekRevenue,
       topItems,
-      paymentMethodStats,
     ] = await Promise.all([
       Order.countDocuments(),
-      Order.countDocuments({
-        createdAt: { $gte: today, $lt: tomorrow },
-      }),
-      Order.countDocuments({
-        createdAt: { $gte: startOfWeek, $lt: endOfWeek },
-      }),
-      Order.countDocuments({
-        createdAt: { $gte: startOfLastWeek, $lt: endOfLastWeek },
-      }),
+      Order.countDocuments({ createdAt: { $gte: today, $lt: tomorrow } }),
+      Order.countDocuments({ createdAt: { $gte: startOfWeek, $lt: endOfWeek } }),
+      Order.countDocuments({ createdAt: { $gte: startOfLastWeek, $lt: endOfLastWeek } }),
+      Order.aggregate([{ $group: { _id: null, total: { $sum: "$totalAmount" } } }]),
       Order.aggregate([
-        { $group: { _id: null, total: { $sum: "$bills.totalWithTax" } } },
+        { $match: { createdAt: { $gte: today, $lt: tomorrow } } },
+        { $group: { _id: null, total: { $sum: "$totalAmount" } } },
       ]),
       Order.aggregate([
-        {
-          $match: {
-            createdAt: { $gte: today, $lt: tomorrow },
-          },
-        },
-        { $group: { _id: null, total: { $sum: "$bills.totalWithTax" } } },
+        { $match: { createdAt: { $gte: startOfWeek, $lt: endOfWeek } } },
+        { $group: { _id: null, total: { $sum: "$totalAmount" } } },
       ]),
       Order.aggregate([
-        {
-          $match: {
-            createdAt: { $gte: startOfWeek, $lt: endOfWeek },
-          },
-        },
-        { $group: { _id: null, total: { $sum: "$bills.totalWithTax" } } },
+        { $match: { createdAt: { $gte: startOfLastWeek, $lt: endOfLastWeek } } },
+        { $group: { _id: null, total: { $sum: "$totalAmount" } } },
       ]),
-      Order.aggregate([
-        {
-          $match: {
-            createdAt: { $gte: startOfLastWeek, $lt: endOfLastWeek },
-          },
-        },
-        { $group: { _id: null, total: { $sum: "$bills.totalWithTax" } } },
-      ]),
-      // Get top selling items
       Order.aggregate([
         { $unwind: "$items" },
         {
           $group: {
             _id: "$items.name",
             totalQuantity: { $sum: "$items.quantity" },
-            totalRevenue: {
-              $sum: {
-                $multiply: ["$items.quantity", "$items.pricePerQuantity"],
-              },
-            },
+            totalRevenue: { $sum: { $multiply: ["$items.quantity", "$items.price"] } },
           },
         },
         { $sort: { totalQuantity: -1 } },
         { $limit: 10 },
       ]),
-      // Get payment method statistics
-      Order.aggregate([
-        {
-          $group: {
-            _id: "$paymentMethod",
-            count: { $sum: 1 },
-            totalAmount: { $sum: "$bills.totalWithTax" },
-          },
-        },
-        { $sort: { count: -1 } },
-      ]),
     ]);
 
-    // Calculate percentages
-    const ordersWeekPercentage =
-      lastWeekOrders > 0
-        ? Math.round(((weekOrders - lastWeekOrders) / lastWeekOrders) * 100)
-        : weekOrders > 0
-        ? 100
-        : 0;
+    const ordersWeekPercentage = lastWeekOrders > 0
+      ? Math.round(((weekOrders - lastWeekOrders) / lastWeekOrders) * 100)
+      : weekOrders > 0 ? 100 : 0;
 
-    const revenueWeekPercentage =
-      lastWeekRevenue.length > 0 && lastWeekRevenue[0].total > 0
-        ? Math.round(
-            ((weekRevenue[0]?.total || 0 - lastWeekRevenue[0].total) /
-              lastWeekRevenue[0].total) *
-              100
-          )
-        : weekRevenue.length > 0
-        ? 100
-        : 0;
+    const revenueWeekPercentage = lastWeekRevenue.length > 0 && lastWeekRevenue[0].total > 0
+      ? Math.round(((weekRevenue[0]?.total || 0 - lastWeekRevenue[0].total) / lastWeekRevenue[0].total) * 100)
+      : weekRevenue.length > 0 ? 100 : 0;
 
     res.status(200).json({
       success: true,
@@ -527,9 +434,7 @@ const getAllSalesStats = async (req, res, next) => {
         weekRevenue: weekRevenue.length > 0 ? weekRevenue[0].total : 0,
         revenueWeekPercentage,
         topItems: topItems || [],
-        paymentMethods: paymentMethodStats || [],
-        averageOrderValue:
-          totalOrders > 0 ? (totalRevenue[0]?.total || 0) / totalOrders : 0,
+        averageOrderValue: totalOrders > 0 ? (totalRevenue[0]?.total || 0) / totalOrders : 0,
       },
     });
   } catch (error) {
@@ -537,22 +442,17 @@ const getAllSalesStats = async (req, res, next) => {
   }
 };
 
-// 🔐 CASHIER ONLY - Get all cashier's orders (their own historical records)
 const getCashierOrders = async (req, res, next) => {
   try {
-    // Check if user is cashier
     if (req.user.role !== "cashier") {
       return next(createHttpError(403, "Access denied. Cashier only."));
     }
 
-    // Get query parameters for filtering
-    // ✅ FIXED: Increased limit from 50 to 1000
-    const { startDate, endDate, page = 1, limit = 1000 } = req.query;
+    const { startDate, endDate, page = 1, limit = 100 } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     let dateFilter = {};
 
-    // Apply date filter if provided
     if (startDate || endDate) {
       dateFilter.createdAt = {};
       if (startDate) {
@@ -567,31 +467,25 @@ const getCashierOrders = async (req, res, next) => {
       }
     }
 
-    const query = {
-      user: req.user._id, // Cashier can only see their own orders
-      ...dateFilter,
-    };
-
-    // Get total count for pagination
+    const query = { user: req.user._id, ...dateFilter };
     const totalOrders = await Order.countDocuments(query);
 
-    // Get orders with pagination
     const orders = await Order.find(query)
       .populate("table")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit));
 
-    // Get summary statistics for the cashier
     const cashierStats = await Order.aggregate([
       { $match: { user: req.user._id } },
       {
         $group: {
           _id: null,
           totalOrders: { $sum: 1 },
-          totalRevenue: { $sum: "$bills.totalWithTax" },
-          totalTax: { $sum: "$bills.tax" },
-          averageOrderValue: { $avg: "$bills.totalWithTax" },
+          totalRevenue: { $sum: "$totalAmount" },
+          totalCost: { $sum: "$totalCost" },
+          totalProfit: { $sum: "$profit" },
+          averageOrderValue: { $avg: "$totalAmount" },
         },
       },
     ]);
@@ -606,15 +500,13 @@ const getCashierOrders = async (req, res, next) => {
           limit: parseInt(limit),
           pages: Math.ceil(totalOrders / parseInt(limit)),
         },
-        summary:
-          cashierStats.length > 0
-            ? cashierStats[0]
-            : {
-                totalOrders: 0,
-                totalRevenue: 0,
-                totalTax: 0,
-                averageOrderValue: 0,
-              },
+        summary: cashierStats.length > 0 ? cashierStats[0] : {
+          totalOrders: 0,
+          totalRevenue: 0,
+          totalCost: 0,
+          totalProfit: 0,
+          averageOrderValue: 0,
+        },
       },
     });
   } catch (error) {
@@ -622,10 +514,8 @@ const getCashierOrders = async (req, res, next) => {
   }
 };
 
-// 🔐 CASHIER ONLY - Get today's orders summary for dashboard
 const getTodaysOrdersSummary = async (req, res, next) => {
   try {
-    // Check if user is cashier
     if (req.user.role !== "cashier") {
       return next(createHttpError(403, "Access denied. Cashier only."));
     }
@@ -640,38 +530,35 @@ const getTodaysOrdersSummary = async (req, res, next) => {
       createdAt: { $gte: today, $lt: tomorrow },
     };
 
-    // Get today's orders count and revenue
     const todayStats = await Order.aggregate([
       { $match: query },
       {
         $group: {
           _id: null,
           orderCount: { $sum: 1 },
-          totalRevenue: { $sum: "$bills.totalWithTax" },
-          totalTax: { $sum: "$bills.tax" },
-          averageOrderValue: { $avg: "$bills.totalWithTax" },
+          totalRevenue: { $sum: "$totalAmount" },
+          totalCost: { $sum: "$totalCost" },
+          totalProfit: { $sum: "$profit" },
+          averageOrderValue: { $avg: "$totalAmount" },
         },
       },
     ]);
 
-    // Get today's orders list
     const todaysOrders = await Order.find(query)
       .populate("table")
       .sort({ createdAt: -1 })
-      .limit(10); // Limit to 10 most recent for dashboard
+      .limit(10);
 
     res.status(200).json({
       success: true,
       data: {
-        summary:
-          todayStats.length > 0
-            ? todayStats[0]
-            : {
-                orderCount: 0,
-                totalRevenue: 0,
-                totalTax: 0,
-                averageOrderValue: 0,
-              },
+        summary: todayStats.length > 0 ? todayStats[0] : {
+          orderCount: 0,
+          totalRevenue: 0,
+          totalCost: 0,
+          totalProfit: 0,
+          averageOrderValue: 0,
+        },
         recentOrders: todaysOrders,
       },
     });

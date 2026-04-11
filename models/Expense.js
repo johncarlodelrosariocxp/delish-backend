@@ -1,7 +1,7 @@
-// models/Inventory.js
+// models/Expense.js
 const mongoose = require("mongoose");
 
-const inventorySchema = new mongoose.Schema(
+const expenseSchema = new mongoose.Schema(
   {
     itemName: {
       type: String,
@@ -21,8 +21,16 @@ const inventorySchema = new mongoose.Schema(
     quantity: {
       type: Number,
       required: true,
-      min: 1,
-      default: 1,
+      min: 0,
+      default: 0,
+    },
+    usedQuantity: {
+      type: Number,
+      default: 0,
+    },
+    remainingQuantity: {
+      type: Number,
+      default: 0,
     },
     unit: {
       type: String,
@@ -33,13 +41,11 @@ const inventorySchema = new mongoose.Schema(
       type: Number,
       required: true,
       min: 0,
-      default: 0,
     },
     totalCost: {
       type: Number,
       required: true,
       min: 0,
-      default: 0,
     },
     supplier: {
       type: String,
@@ -69,12 +75,29 @@ const inventorySchema = new mongoose.Schema(
   }
 );
 
-// Auto-calculate totalCost before saving
-inventorySchema.pre("save", function(next) {
+// Auto-calculate totalCost and remainingQuantity before saving
+expenseSchema.pre("save", function(next) {
   if (this.quantity && this.unitPrice) {
     this.totalCost = this.quantity * this.unitPrice;
   }
+  this.remainingQuantity = this.quantity - this.usedQuantity;
   next();
 });
 
-module.exports = mongoose.model("Inventory", inventorySchema);
+// Method to use expense in order
+expenseSchema.methods.useStock = async function(quantity) {
+  if (this.remainingQuantity < quantity) {
+    throw new Error(`Insufficient stock for ${this.itemName}. Available: ${this.remainingQuantity}`);
+  }
+  this.usedQuantity += quantity;
+  this.remainingQuantity = this.quantity - this.usedQuantity;
+  await this.save();
+  return {
+    itemName: this.itemName,
+    quantityUsed: quantity,
+    costPerUnit: this.unitPrice,
+    totalCost: quantity * this.unitPrice
+  };
+};
+
+module.exports = mongoose.model("Expense", expenseSchema);
