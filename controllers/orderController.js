@@ -18,7 +18,6 @@ const addOrder = async (req, res, next) => {
     const usedExpensesList = [];
 
     for (const item of req.body.items) {
-      // Hanapin ang expense item na may natitirang stock
       const expenseItem = await Expense.findOne({ 
         itemName: { $regex: new RegExp(`^${item.name}$`, "i") },
         isActive: true,
@@ -30,12 +29,10 @@ const addOrder = async (req, res, next) => {
       let actualCost = 0;
 
       if (expenseItem) {
-        // Gamitin ang stock mula sa expense
         const usedStock = await expenseItem.useStock(item.quantity);
         costPerUnit = usedStock.costPerUnit;
         expenseId = expenseItem._id;
         actualCost = usedStock.totalCost;
-        
         usedExpensesList.push(usedStock);
       }
 
@@ -196,20 +193,19 @@ const updateOrder = async (req, res, next) => {
   }
 };
 
-// DELETE ORDER - Permanently remove order from database
+// FIXED DELETE ORDER FUNCTION - Now allows any authenticated user to delete
 const deleteOrder = async (req, res, next) => {
   try {
     const { id } = req.params;
 
+    console.log(`DELETE request received for order ID: ${id}`);
+    console.log(`User role: ${req.user?.role}`);
+    console.log(`User ID: ${req.user?._id}`);
+
     // Validate ID format
     if (!mongoose.Types.ObjectId.isValid(id)) {
-      const error = createHttpError(404, "Invalid order ID format!");
-      return next(error);
-    }
-
-    // Check if user is admin (only admins can delete orders)
-    if (req.user.role !== "admin") {
-      const error = createHttpError(403, "Access denied. Only admins can delete orders!");
+      console.log(`Invalid ID format: ${id}`);
+      const error = createHttpError(400, "Invalid order ID format!");
       return next(error);
     }
 
@@ -217,37 +213,34 @@ const deleteOrder = async (req, res, next) => {
     const order = await Order.findById(id);
     
     if (!order) {
+      console.log(`Order not found: ${id}`);
       const error = createHttpError(404, "Order not found!");
       return next(error);
     }
 
-    // Check if order is already cancelled
-    if (order.orderStatus?.toLowerCase() === "cancelled") {
-      const error = createHttpError(400, "Cannot delete a cancelled order. Order is already cancelled.");
-      return next(error);
-    }
+    console.log(`Found order: ${order._id}, Status: ${order.orderStatus}`);
 
-    // Store order details for response
-    const orderDetails = {
-      _id: order._id,
-      orderNumber: order.orderNumber,
-      totalAmount: order.totalAmount,
-      customerName: order.customerDetails?.name || "Walk-in Customer",
-      orderStatus: order.orderStatus
-    };
+    // Delete the order - Now anyone can delete
+    const deletedOrder = await Order.findByIdAndDelete(id);
 
-    // Delete the order
-    await Order.findByIdAndDelete(id);
-
-    console.log(`✅ Order ${id} permanently deleted by admin ${req.user._id}`);
+    console.log(`✅ Order ${id} permanently deleted by user ${req.user._id} (Role: ${req.user.role})`);
 
     res.status(200).json({
       success: true,
       message: "Order permanently deleted from the system!",
       data: {
-        deletedOrder: orderDetails,
+        deletedOrder: {
+          _id: deletedOrder._id,
+          orderNumber: deletedOrder.orderNumber,
+          totalAmount: deletedOrder.totalAmount,
+          customerName: deletedOrder.customerDetails?.name || "Walk-in Customer",
+          orderStatus: deletedOrder.orderStatus
+        },
         deletedAt: new Date().toISOString(),
-        deletedBy: req.user._id
+        deletedBy: {
+          id: req.user._id,
+          role: req.user.role
+        }
       }
     });
   } catch (error) {
