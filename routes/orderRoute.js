@@ -5,6 +5,7 @@ const {
   getOrders,
   getOrderById,
   updateOrder,
+  deleteOrder,
   getOrderStats,
   getAllOrdersAdmin,
   getAllSalesStats,
@@ -17,7 +18,7 @@ const router = express.Router();
 // User routes
 router.route("/").get(isVerifiedUser, getOrders).post(isVerifiedUser, addOrder);
 router.route("/stats").get(isVerifiedUser, getOrderStats);
-router.route("/:id").get(isVerifiedUser, getOrderById).put(isVerifiedUser, updateOrder);
+router.route("/:id").get(isVerifiedUser, getOrderById).put(isVerifiedUser, updateOrder).delete(isVerifiedUser, deleteOrder);
 
 // Cashier routes
 router.route("/cashier/orders").get(isVerifiedUser, getCashierOrders);

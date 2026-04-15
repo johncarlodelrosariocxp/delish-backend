@@ -196,6 +196,66 @@ const updateOrder = async (req, res, next) => {
   }
 };
 
+// DELETE ORDER - Permanently remove order from database
+const deleteOrder = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    // Validate ID format
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      const error = createHttpError(404, "Invalid order ID format!");
+      return next(error);
+    }
+
+    // Check if user is admin (only admins can delete orders)
+    if (req.user.role !== "admin") {
+      const error = createHttpError(403, "Access denied. Only admins can delete orders!");
+      return next(error);
+    }
+
+    // Find the order first to check if it exists
+    const order = await Order.findById(id);
+    
+    if (!order) {
+      const error = createHttpError(404, "Order not found!");
+      return next(error);
+    }
+
+    // Check if order is already cancelled
+    if (order.orderStatus?.toLowerCase() === "cancelled") {
+      const error = createHttpError(400, "Cannot delete a cancelled order. Order is already cancelled.");
+      return next(error);
+    }
+
+    // Store order details for response
+    const orderDetails = {
+      _id: order._id,
+      orderNumber: order.orderNumber,
+      totalAmount: order.totalAmount,
+      customerName: order.customerDetails?.name || "Walk-in Customer",
+      orderStatus: order.orderStatus
+    };
+
+    // Delete the order
+    await Order.findByIdAndDelete(id);
+
+    console.log(`✅ Order ${id} permanently deleted by admin ${req.user._id}`);
+
+    res.status(200).json({
+      success: true,
+      message: "Order permanently deleted from the system!",
+      data: {
+        deletedOrder: orderDetails,
+        deletedAt: new Date().toISOString(),
+        deletedBy: req.user._id
+      }
+    });
+  } catch (error) {
+    console.error("Error deleting order:", error);
+    next(error);
+  }
+};
+
 const getOrderStats = async (req, res, next) => {
   try {
     let matchQuery = {};
@@ -572,6 +632,7 @@ module.exports = {
   getOrderById,
   getOrders,
   updateOrder,
+  deleteOrder,
   getOrderStats,
   getAllOrdersAdmin,
   getAllSalesStats,
