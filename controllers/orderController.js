@@ -193,37 +193,56 @@ const updateOrder = async (req, res, next) => {
   }
 };
 
-// FIXED DELETE ORDER FUNCTION - Now allows any authenticated user to delete
+// ========== FIXED DELETE FUNCTION - COMPLETELY REWRITTEN ==========
 const deleteOrder = async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    console.log(`DELETE request received for order ID: ${id}`);
-    console.log(`User role: ${req.user?.role}`);
+    console.log(`========== DELETE ORDER REQUEST ==========`);
+    console.log(`Order ID: ${id}`);
     console.log(`User ID: ${req.user?._id}`);
+    console.log(`User Role: ${req.user?.role}`);
+    console.log(`Request timestamp: ${new Date().toISOString()}`);
 
     // Validate ID format
     if (!mongoose.Types.ObjectId.isValid(id)) {
-      console.log(`Invalid ID format: ${id}`);
-      const error = createHttpError(400, "Invalid order ID format!");
-      return next(error);
+      console.log(`❌ Invalid ID format: ${id}`);
+      return res.status(400).json({
+        success: false,
+        message: "Invalid order ID format! Please provide a valid MongoDB ObjectId."
+      });
     }
 
-    // Find the order first to check if it exists
+    // Find the order first
     const order = await Order.findById(id);
     
     if (!order) {
-      console.log(`Order not found: ${id}`);
-      const error = createHttpError(404, "Order not found!");
-      return next(error);
+      console.log(`❌ Order not found with ID: ${id}`);
+      return res.status(404).json({
+        success: false,
+        message: `Order with ID ${id} not found! It may have been already deleted.`
+      });
     }
 
-    console.log(`Found order: ${order._id}, Status: ${order.orderStatus}`);
+    console.log(`✅ Found order: ${order._id}`);
+    console.log(`Order number: ${order.orderNumber}`);
+    console.log(`Order status: ${order.orderStatus}`);
+    console.log(`Order amount: ${order.totalAmount}`);
 
-    // Delete the order - Now anyone can delete
+    // Delete the order - NO ROLE RESTRICTION
     const deletedOrder = await Order.findByIdAndDelete(id);
 
-    console.log(`✅ Order ${id} permanently deleted by user ${req.user._id} (Role: ${req.user.role})`);
+    if (!deletedOrder) {
+      console.log(`❌ Failed to delete order: ${id}`);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to delete order. Please try again."
+      });
+    }
+
+    console.log(`✅ SUCCESSFULLY DELETED ORDER: ${id}`);
+    console.log(`Deleted by: ${req.user._id} (${req.user.role})`);
+    console.log(`=========================================`);
 
     res.status(200).json({
       success: true,
@@ -234,20 +253,27 @@ const deleteOrder = async (req, res, next) => {
           orderNumber: deletedOrder.orderNumber,
           totalAmount: deletedOrder.totalAmount,
           customerName: deletedOrder.customerDetails?.name || "Walk-in Customer",
-          orderStatus: deletedOrder.orderStatus
+          orderStatus: deletedOrder.orderStatus,
+          createdAt: deletedOrder.createdAt
         },
         deletedAt: new Date().toISOString(),
         deletedBy: {
           id: req.user._id,
+          email: req.user.email,
           role: req.user.role
         }
       }
     });
   } catch (error) {
-    console.error("Error deleting order:", error);
-    next(error);
+    console.error(`❌ ERROR IN DELETE ORDER:`, error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error while deleting order",
+      error: error.message
+    });
   }
 };
+// ========== END OF FIXED DELETE FUNCTION ==========
 
 const getOrderStats = async (req, res, next) => {
   try {
