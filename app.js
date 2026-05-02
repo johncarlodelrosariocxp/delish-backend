@@ -9,7 +9,6 @@ const cors = require("cors");
 // Route imports
 const userRoutes = require("./routes/userRoute");
 const orderRoutes = require("./routes/orderRoute");
-const tableRoutes = require("./routes/tableRoute");
 const paymentRoutes = require("./routes/paymentRoute");
 const salesRoutes = require("./routes/salesRoute");
 const menuRoutes = require("./routes/menuRoutes");
@@ -45,10 +44,19 @@ const corsOptions = {
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   allowedHeaders: [
-    "Content-Type", "Authorization", "Cookie", "X-Requested-With",
-    "x-access-token", "Accept", "x-frontend-source", "x-frontend-url",
-    "X-Frontend-Source", "X-Frontend-URL", "Access-Control-Allow-Origin",
-    "Access-Control-Allow-Headers", "Access-Control-Allow-Methods",
+    "Content-Type",
+    "Authorization",
+    "Cookie",
+    "X-Requested-With",
+    "x-access-token",
+    "Accept",
+    "x-frontend-source",
+    "x-frontend-url",
+    "X-Frontend-Source",
+    "X-Frontend-URL",
+    "Access-Control-Allow-Origin",
+    "Access-Control-Allow-Headers",
+    "Access-Control-Allow-Methods",
   ],
   exposedHeaders: ["set-cookie", "Authorization"],
   preflightContinue: false,
@@ -77,11 +85,11 @@ app.use((req, res, next) => {
   res.header("Access-Control-Allow-Credentials", "true");
   res.header(
     "Access-Control-Allow-Methods",
-    "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+    "GET, POST, PUT, DELETE, PATCH, OPTIONS",
   );
   res.header(
     "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, Cookie, X-Requested-With, x-access-token, Accept, x-frontend-source, x-frontend-url, X-Frontend-Source, X-Frontend-URL"
+    "Content-Type, Authorization, Cookie, X-Requested-With, x-access-token, Accept, x-frontend-source, x-frontend-url, X-Frontend-Source, X-Frontend-URL",
   );
   next();
 });
@@ -107,7 +115,6 @@ app.get("/api/debug/orders", async (req, res) => {
     const Order = require("./models/orderModel");
     const orders = await Order.find({})
       .populate("user", "name email role")
-      .populate("table", "tableNumber capacity status")
       .sort({ createdAt: -1 })
       .lean();
 
@@ -127,9 +134,18 @@ app.get("/api/debug/expenses", async (req, res) => {
   try {
     const Expense = require("./models/Expense");
     const expenses = await Expense.find({}).sort({ datePurchased: -1 }).lean();
-    const totalPurchased = expenses.reduce((sum, exp) => sum + (exp.totalCost || 0), 0);
-    const totalUsed = expenses.reduce((sum, exp) => sum + ((exp.usedQuantity || 0) * (exp.unitPrice || 0)), 0);
-    const totalRemaining = expenses.reduce((sum, exp) => sum + ((exp.remainingQuantity || 0) * (exp.unitPrice || 0)), 0);
+    const totalPurchased = expenses.reduce(
+      (sum, exp) => sum + (exp.totalCost || 0),
+      0,
+    );
+    const totalUsed = expenses.reduce(
+      (sum, exp) => sum + (exp.usedQuantity || 0) * (exp.unitPrice || 0),
+      0,
+    );
+    const totalRemaining = expenses.reduce(
+      (sum, exp) => sum + (exp.remainingQuantity || 0) * (exp.unitPrice || 0),
+      0,
+    );
 
     res.json({
       success: true,
@@ -154,14 +170,24 @@ app.get("/api/debug/profit-loss", async (req, res) => {
     const Expense = require("./models/Expense");
 
     const orders = await Order.find({ orderStatus: "completed" });
-    const totalIncome = orders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
+    const totalIncome = orders.reduce(
+      (sum, order) => sum + (order.totalAmount || 0),
+      0,
+    );
 
     const expenses = await Expense.find({ isActive: true });
-    const totalExpensesUsed = expenses.reduce((sum, exp) => sum + ((exp.usedQuantity || 0) * (exp.unitPrice || 0)), 0);
-    const totalPurchased = expenses.reduce((sum, exp) => sum + (exp.totalCost || 0), 0);
+    const totalExpensesUsed = expenses.reduce(
+      (sum, exp) => sum + (exp.usedQuantity || 0) * (exp.unitPrice || 0),
+      0,
+    );
+    const totalPurchased = expenses.reduce(
+      (sum, exp) => sum + (exp.totalCost || 0),
+      0,
+    );
 
     const totalProfit = totalIncome - totalExpensesUsed;
-    const profitMargin = totalIncome > 0 ? (totalProfit / totalIncome) * 100 : 0;
+    const profitMargin =
+      totalIncome > 0 ? (totalProfit / totalIncome) * 100 : 0;
 
     res.json({
       success: true,
@@ -185,18 +211,26 @@ app.get("/api/debug/profit-loss", async (req, res) => {
 app.get("/api/debug/database", async (req, res) => {
   try {
     const mongoose = require("mongoose");
-    const collections = await mongoose.connection.db.listCollections().toArray();
+    const collections = await mongoose.connection.db
+      .listCollections()
+      .toArray();
     const collectionCounts = {};
 
     for (const collection of collections) {
-      const Model = mongoose.models[collection.name] || mongoose.model(collection.name, new mongoose.Schema({}, { strict: false }));
+      const Model =
+        mongoose.models[collection.name] ||
+        mongoose.model(
+          collection.name,
+          new mongoose.Schema({}, { strict: false }),
+        );
       const count = await Model.countDocuments();
       collectionCounts[collection.name] = count;
     }
 
     res.json({
       success: true,
-      database: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected",
+      database:
+        mongoose.connection.readyState === 1 ? "Connected" : "Disconnected",
       connectionState: mongoose.connection.readyState,
       collections: collections.map((c) => c.name),
       counts: collectionCounts,
@@ -338,11 +372,6 @@ app.get("/", (req, res) => {
         byTag: "GET /api/menu/tag/:tag",
         byId: "GET /api/menu/:id",
       },
-      tables: {
-        list: "GET /api/table",
-        create: "POST /api/table",
-        update: "PUT /api/table/:id",
-      },
       sales: {
         list: "GET /api/sales",
         today: "GET /api/sales/today",
@@ -367,7 +396,6 @@ app.get("/", (req, res) => {
 // ==================== API ROUTES ====================
 app.use("/api/user", userRoutes);
 app.use("/api/order", orderRoutes);
-app.use("/api/table", tableRoutes);
 app.use("/api/payment", paymentRoutes);
 app.use("/api/expenses", expenseRoutes);
 app.use("/api/sales", salesRoutes);
@@ -398,7 +426,6 @@ app.use((req, res) => {
       "GET /api/order",
       "POST /api/order",
       "GET /api/menu",
-      "GET /api/table",
       "GET /api/sales",
     ],
   });
@@ -415,11 +442,15 @@ const server = app.listen(PORT, () => {
   console.log(`   GET  /api/expenses - View all expenses`);
   console.log(`   POST /api/expenses - Add new expense`);
   console.log(`   GET  /api/expenses/profit-loss - View profit report`);
-  console.log(`   GET  /api/expenses/inventory-value - View remaining stock value`);
+  console.log(
+    `   GET  /api/expenses/inventory-value - View remaining stock value`,
+  );
   console.log(`=========================================\n`);
   console.log(`📊 PROFIT/LOSS REPORT ENDPOINTS:`);
   console.log(`   POST /api/profit-loss/generate - Generate custom report`);
-  console.log(`   POST /api/profit-loss/generate-daily - Generate daily report`);
+  console.log(
+    `   POST /api/profit-loss/generate-daily - Generate daily report`,
+  );
   console.log(`   GET  /api/profit-loss/latest - Get latest report`);
   console.log(`   GET  /api/profit-loss/summary - Get all-time summary`);
   console.log(`   GET  /api/profit-loss - Get all reports`);
