@@ -1,59 +1,56 @@
 const express = require("express");
 const router = express.Router();
 const menuController = require("../controllers/menuController");
-const { isVerifiedUser } = require("../middlewares/tokenVerification");
+const { protect, admin } = require("../middlewares/authMiddleware"); // CHANGE: admin instead of adminOnly
 
-// Public routes (no authentication required)
-router.get("/", menuController.getAllMenus);
-router.get("/tag/:tag", menuController.getMenusByTag);
-router.get("/:id", menuController.getMenuById);
-
-// Menu Item routes (public)
-router.get("/:menuId/items", menuController.getMenuItems);
-router.get("/:menuId/items/:itemId", menuController.getMenuItem);
-
-// Item flavor routes (public)
-router.get("/item/flavors", menuController.getAllItemFlavors);
+// Public routes (everyone can view menu)
+router.get("/", protect, menuController.getAllMenus);
+router.get("/tag/:tag", protect, menuController.getMenusByTag);
+router.get("/:id", protect, menuController.getMenuById);
+router.get("/:menuId/items", protect, menuController.getMenuItems);
+router.get("/:menuId/items/:itemId", protect, menuController.getMenuItem);
+router.get(
+  "/:menuId/items/:itemId/availability",
+  protect,
+  menuController.checkMenuItemAvailability,
+);
+router.get("/item/flavors", protect, menuController.getAllItemFlavors);
 router.get(
   "/item/flavors/category/:category",
+  protect,
   menuController.getItemFlavorsByCategory,
 );
 
-// Protected routes (require authentication)
-// All routes below this require authentication
-router.use(isVerifiedUser);
-
-// Admin check middleware
-const isAdmin = (req, res, next) => {
-  if (req.user && req.user.role === "admin") {
-    next();
-  } else {
-    res.status(403).json({
-      success: false,
-      message: "Admin access required",
-    });
-  }
-};
-
 // Admin only routes
-router.use(isAdmin);
-
-// Menu CRUD
-router.post("/", menuController.createMenu);
-router.put("/:id", menuController.updateMenu);
-router.delete("/:id", menuController.deleteMenu);
-
-// Menu Item CRUD
-router.post("/:menuId/items", menuController.addMenuItem);
-router.put("/:menuId/items/:itemId", menuController.updateMenuItem);
-router.delete("/:menuId/items/:itemId", menuController.deleteMenuItem);
-
-// Item flavor CRUD
-router.post("/item/flavors", menuController.createItemFlavor);
-router.put("/item/flavors/:id", menuController.updateItemFlavor);
-router.delete("/item/flavors/:id", menuController.deleteItemFlavor);
-
-// Bulk import (admin only)
-router.post("/import", menuController.importMenuData);
+router.post("/", protect, admin, menuController.createMenu);
+router.put("/:id", protect, admin, menuController.updateMenu);
+router.delete("/:id", protect, admin, menuController.deleteMenu);
+router.post("/:menuId/items", protect, admin, menuController.addMenuItem);
+router.put(
+  "/:menuId/items/:itemId",
+  protect,
+  admin,
+  menuController.updateMenuItem,
+);
+router.delete(
+  "/:menuId/items/:itemId",
+  protect,
+  admin,
+  menuController.deleteMenuItem,
+);
+router.post("/item/flavors", protect, admin, menuController.createItemFlavor);
+router.put(
+  "/item/flavors/:id",
+  protect,
+  admin,
+  menuController.updateItemFlavor,
+);
+router.delete(
+  "/item/flavors/:id",
+  protect,
+  admin,
+  menuController.deleteItemFlavor,
+);
+router.post("/import", protect, admin, menuController.importMenuData);
 
 module.exports = router;

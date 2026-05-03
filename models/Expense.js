@@ -1,4 +1,3 @@
-// models/Expense.js
 const mongoose = require("mongoose");
 
 const expenseSchema = new mongoose.Schema(
@@ -72,11 +71,11 @@ const expenseSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Auto-calculate totalCost and remainingQuantity before saving
-expenseSchema.pre("save", function(next) {
+expenseSchema.pre("save", function (next) {
   if (this.quantity && this.unitPrice) {
     this.totalCost = this.quantity * this.unitPrice;
   }
@@ -85,9 +84,11 @@ expenseSchema.pre("save", function(next) {
 });
 
 // Method to use expense in order
-expenseSchema.methods.useStock = async function(quantity) {
+expenseSchema.methods.useStock = async function (quantity) {
   if (this.remainingQuantity < quantity) {
-    throw new Error(`Insufficient stock for ${this.itemName}. Available: ${this.remainingQuantity}`);
+    throw new Error(
+      `Insufficient stock for ${this.itemName}. Available: ${this.remainingQuantity}`,
+    );
   }
   this.usedQuantity += quantity;
   this.remainingQuantity = this.quantity - this.usedQuantity;
@@ -96,7 +97,7 @@ expenseSchema.methods.useStock = async function(quantity) {
     itemName: this.itemName,
     quantityUsed: quantity,
     costPerUnit: this.unitPrice,
-    totalCost: quantity * this.unitPrice
+    totalCost: quantity * this.unitPrice,
   };
 };
 

@@ -19,10 +19,19 @@ exports.getExpenses = async (req, res) => {
     }
 
     const expenses = await Expense.find(query).sort({ datePurchased: -1 });
-    
-    const totalPurchased = expenses.reduce((sum, exp) => sum + (exp.totalCost || 0), 0);
-    const totalUsed = expenses.reduce((sum, exp) => sum + ((exp.usedQuantity || 0) * (exp.unitPrice || 0)), 0);
-    const totalRemaining = expenses.reduce((sum, exp) => sum + ((exp.remainingQuantity || 0) * (exp.unitPrice || 0)), 0);
+
+    const totalPurchased = expenses.reduce(
+      (sum, exp) => sum + (exp.totalCost || 0),
+      0,
+    );
+    const totalUsed = expenses.reduce(
+      (sum, exp) => sum + (exp.usedQuantity || 0) * (exp.unitPrice || 0),
+      0,
+    );
+    const totalRemaining = expenses.reduce(
+      (sum, exp) => sum + (exp.remainingQuantity || 0) * (exp.unitPrice || 0),
+      0,
+    );
 
     res.json({
       success: true,
@@ -70,7 +79,7 @@ exports.addExpense = async (req, res) => {
     }
 
     const totalCost = Number(quantity) * Number(unitPrice);
-    
+
     const expense = new Expense({
       itemName,
       description: description || "",
@@ -120,8 +129,13 @@ exports.updateExpense = async (req, res) => {
       });
     }
 
-    Object.keys(updateData).forEach(key => {
-      if (key !== '_id' && key !== '__v' && key !== 'createdAt' && key !== 'updatedAt') {
+    Object.keys(updateData).forEach((key) => {
+      if (
+        key !== "_id" &&
+        key !== "__v" &&
+        key !== "createdAt" &&
+        key !== "updatedAt"
+      ) {
         expense[key] = updateData[key];
       }
     });
@@ -176,13 +190,20 @@ exports.deleteExpense = async (req, res) => {
   }
 };
 
-// Get inventory value (remaining stock)
+// Get inventory value (remaining stock) - Uses Inventory model now
 exports.getInventoryValue = async (req, res) => {
   try {
-    const expenses = await Expense.find({ isActive: true, remainingQuantity: { $gt: 0 } });
-    
-    const inventoryValue = expenses.reduce((sum, exp) => sum + (exp.remainingQuantity * exp.unitPrice), 0);
-    const items = expenses.map(exp => ({
+    const Inventory = require("../models/Inventory");
+    const expenses = await Inventory.find({
+      isActive: true,
+      remainingQuantity: { $gt: 0 },
+    });
+
+    const inventoryValue = expenses.reduce(
+      (sum, exp) => sum + exp.remainingQuantity * exp.unitPrice,
+      0,
+    );
+    const items = expenses.map((exp) => ({
       itemName: exp.itemName,
       remainingQuantity: exp.remainingQuantity,
       unit: exp.unit,
@@ -208,75 +229,68 @@ exports.getInventoryValue = async (req, res) => {
   }
 };
 
-// ============================================================
-// FIXED: LAHAT NG EXPENSES BINABAWAS SA KITA (kahit hindi pa nagamit)
-// ============================================================
+// Get profit/loss report
 exports.getProfitLossReport = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
-    
+
     console.log("=========================================");
     console.log("📊 PROFIT & LOSS REPORT");
     console.log("📅 Date Range:", { startDate, endDate });
     console.log("=========================================");
-    
-    // ======================== 1. BUILD DATE FILTER ========================
+
     const ordersDateFilter = {};
     const expensesDateFilter = {};
-    
+
     if (startDate && endDate) {
       ordersDateFilter.createdAt = {
         $gte: new Date(startDate),
-        $lte: new Date(endDate)
+        $lte: new Date(endDate),
       };
       expensesDateFilter.datePurchased = {
         $gte: new Date(startDate),
-        $lte: new Date(endDate)
+        $lte: new Date(endDate),
       };
     }
-    
-    // ======================== 2. GET ALL COMPLETED ORDERS ========================
-    const orders = await Order.find({ 
+
+    const orders = await Order.find({
       orderStatus: "completed",
-      ...ordersDateFilter
+      ...ordersDateFilter,
     });
-    
+
     console.log(`📋 Total completed orders: ${orders.length}`);
-    
-    // ======================== 3. COMPUTE TOTAL INCOME ========================
+
     let totalIncome = 0;
     for (const order of orders) {
       totalIncome += order.totalAmount || 0;
     }
-    
+
     console.log(`💰 TOTAL INCOME: ₱${totalIncome.toFixed(2)}`);
-    
-    // ======================== 4. COMPUTE TOTAL EXPENSES ========================
-    // IMPORTANTE: LAHAT ng biniling expenses, HINDI yung nagamit lang!
-    const expenses = await Expense.find({ 
+
+    const Inventory = require("../models/Inventory");
+    const expenses = await Inventory.find({
       isActive: true,
-      ...expensesDateFilter
+      ...expensesDateFilter,
     });
-    
+
     let totalExpenses = 0;
     for (const expense of expenses) {
       totalExpenses += expense.totalCost || 0;
     }
-    
-    console.log(`💸 TOTAL EXPENSES (LAHAT NG BINILI): ₱${totalExpenses.toFixed(2)}`);
-    console.log(`📦 Number of expense items: ${expenses.length}`);
-    
-    // ======================== 5. COMPUTE PROFIT ========================
-    // FORMULA: PROFIT = TOTAL INCOME - TOTAL EXPENSES (LAHAT)
+
+    console.log(
+      `💸 TOTAL EXPENSES (LAHAT NG BINILI): ₱${totalExpenses.toFixed(2)}`,
+    );
+
     const totalProfit = totalIncome - totalExpenses;
-    const profitMargin = totalIncome > 0 ? (totalProfit / totalIncome) * 100 : 0;
-    
+    const profitMargin =
+      totalIncome > 0 ? (totalProfit / totalIncome) * 100 : 0;
+
     console.log(`📈 TOTAL PROFIT: ₱${totalProfit.toFixed(2)}`);
     console.log(`📊 PROFIT MARGIN: ${profitMargin.toFixed(2)}%`);
     console.log("=========================================");
-    
-    // ======================== 6. EXPENSES BREAKDOWN ========================
-    const expensesBreakdown = expenses.map(exp => ({
+
+    const expensesBreakdown = expenses.map((exp) => ({
       itemName: exp.itemName,
       category: exp.category,
       quantity: exp.quantity,
@@ -285,11 +299,10 @@ exports.getProfitLossReport = async (req, res) => {
       totalCost: exp.totalCost,
       datePurchased: exp.datePurchased,
     }));
-    
-    // ======================== 7. ORDERS BREAKDOWN ========================
+
     const ordersBreakdown = [];
     const orderItemsMap = new Map();
-    
+
     for (const order of orders) {
       for (const item of order.items || []) {
         const key = item.name;
@@ -306,17 +319,16 @@ exports.getProfitLossReport = async (req, res) => {
         }
       }
     }
-    
+
     for (const [key, value] of orderItemsMap) {
       ordersBreakdown.push({
         ...value,
-        profit: value.totalRevenue, // Walang cost dito kasi hiwalay ang expenses
+        profit: value.totalRevenue,
       });
     }
-    
+
     ordersBreakdown.sort((a, b) => b.totalRevenue - a.totalRevenue);
-    
-    // ======================== 8. RETURN RESPONSE ========================
+
     res.json({
       success: true,
       data: {
@@ -327,7 +339,8 @@ exports.getProfitLossReport = async (req, res) => {
           profitMargin: profitMargin.toFixed(2) + "%",
           totalOrders: orders.length,
           totalExpenseItems: expenses.length,
-          averageOrderValue: orders.length > 0 ? totalIncome / orders.length : 0,
+          averageOrderValue:
+            orders.length > 0 ? totalIncome / orders.length : 0,
         },
         expenses: expensesBreakdown,
         ordersBreakdown: ordersBreakdown,

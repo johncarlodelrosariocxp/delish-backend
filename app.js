@@ -14,6 +14,7 @@ const salesRoutes = require("./routes/salesRoute");
 const menuRoutes = require("./routes/menuRoutes");
 const expenseRoutes = require("./routes/expenseRoutes");
 const profitLossRoutes = require("./routes/profitLossRoutes");
+const inventoryRoutes = require("./routes/inventoryRoutes"); // ✅ ADD THIS LINE
 
 const app = express();
 const PORT = process.env.PORT || 8000;
@@ -207,6 +208,31 @@ app.get("/api/debug/profit-loss", async (req, res) => {
   }
 });
 
+// Debug inventory endpoint
+app.get("/api/debug/inventory", async (req, res) => {
+  try {
+    const Inventory = require("./models/Inventory");
+    const items = await Inventory.find({ isActive: true })
+      .sort({ itemName: 1 })
+      .lean();
+
+    const totalValue = items.reduce(
+      (sum, item) => sum + item.remainingQuantity * item.unitPrice,
+      0,
+    );
+
+    res.json({
+      success: true,
+      count: items.length,
+      totalValue: totalValue,
+      items: items,
+    });
+  } catch (error) {
+    console.error("❌ Debug inventory error:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Debug database collections
 app.get("/api/debug/database", async (req, res) => {
   try {
@@ -344,6 +370,17 @@ app.get("/", (req, res) => {
         logout: "POST /api/user/logout",
         profile: "GET /api/user/me",
       },
+      inventory: {
+        list: "GET /api/inventory",
+        add: "POST /api/inventory",
+        update: "PUT /api/inventory/:id",
+        delete: "DELETE /api/inventory/:id",
+        stock: "PUT /api/inventory/:id/stock",
+        linkToMenu: "POST /api/inventory/:id/link-to-menu",
+        lowStock: "GET /api/inventory/low-stock",
+        usageReport: "GET /api/inventory/usage-report",
+        inventoryValue: "GET /api/inventory/inventory-value",
+      },
       expenses: {
         list: "GET /api/expenses",
         add: "POST /api/expenses",
@@ -380,6 +417,7 @@ app.get("/", (req, res) => {
       debug: {
         orders: "GET /api/debug/orders",
         expenses: "GET /api/debug/expenses",
+        inventory: "GET /api/debug/inventory",
         profitLoss: "GET /api/debug/profit-loss",
         database: "GET /api/debug/database",
         users: "GET /api/debug-users",
@@ -401,6 +439,7 @@ app.use("/api/expenses", expenseRoutes);
 app.use("/api/sales", salesRoutes);
 app.use("/api/menu", menuRoutes);
 app.use("/api/profit-loss", profitLossRoutes);
+app.use("/api/inventory", inventoryRoutes); // ✅ ADD THIS LINE
 
 // Global Error Handler
 app.use(globalErrorHandler);
@@ -416,6 +455,8 @@ app.use((req, res) => {
       "POST /api/user/login",
       "POST /api/user/register",
       "GET /api/user/me",
+      "GET /api/inventory",
+      "POST /api/inventory",
       "GET /api/expenses",
       "POST /api/expenses",
       "GET /api/expenses/profit-loss",
@@ -437,6 +478,13 @@ const server = app.listen(PORT, () => {
   console.log(`=========================================`);
   console.log(`📍 Port: ${PORT}`);
   console.log(`🌐 Environment: ${process.env.NODE_ENV || "development"}`);
+  console.log(`=========================================\n`);
+  console.log(`📦 INVENTORY SYSTEM READY:`);
+  console.log(`   GET  /api/inventory - View all inventory items`);
+  console.log(`   POST /api/inventory - Add new inventory item`);
+  console.log(`   PUT  /api/inventory/:id/stock - Update stock`);
+  console.log(`   GET  /api/inventory/low-stock - View low stock items`);
+  console.log(`   GET  /api/inventory/usage-report - View usage report`);
   console.log(`=========================================\n`);
   console.log(`💰 EXPENSE & PROFIT TRACKING SYSTEM READY`);
   console.log(`   GET  /api/expenses - View all expenses`);
@@ -462,6 +510,7 @@ const server = app.listen(PORT, () => {
   console.log(`=========================================\n`);
   console.log(`🔧 DEBUG ENDPOINTS:`);
   console.log(`   GET  /api/debug/expenses - Debug expenses`);
+  console.log(`   GET  /api/debug/inventory - Debug inventory`);
   console.log(`   GET  /api/debug/profit-loss - Quick profit check`);
   console.log(`   GET  /api/debug/orders - Debug orders`);
   console.log(`=========================================\n`);

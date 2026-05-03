@@ -1,4 +1,3 @@
-// models/orderModel.js
 const mongoose = require("mongoose");
 
 const orderItemSchema = new mongoose.Schema({
@@ -315,7 +314,7 @@ const orderSchema = new mongoose.Schema(
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 // Generate order number before saving
@@ -345,7 +344,10 @@ orderSchema.pre("save", async function (next) {
   }
 
   if (this.items && this.items.length > 0) {
-    this.totalCost = this.items.reduce((sum, item) => sum + (item.totalCost || 0), 0);
+    this.totalCost = this.items.reduce(
+      (sum, item) => sum + (item.totalCost || 0),
+      0,
+    );
     this.profit = (this.totalAmount || 0) - this.totalCost;
   }
 
@@ -379,7 +381,7 @@ orderSchema.virtual("customerPhone").get(function () {
 // Static method for financial summary
 orderSchema.statics.getFinancialSummary = async function (startDate, endDate) {
   const match = { orderStatus: "completed" };
-  
+
   if (startDate || endDate) {
     match.createdAt = {};
     if (startDate) match.createdAt.$gte = new Date(startDate);
@@ -396,20 +398,23 @@ orderSchema.statics.getFinancialSummary = async function (startDate, endDate) {
         totalProfit: { $sum: "$profit" },
         totalOrders: { $sum: 1 },
         avgOrderValue: { $avg: "$totalAmount" },
-      }
-    }
+      },
+    },
   ]);
 
-  return summary[0] || {
-    totalRevenue: 0,
-    totalCost: 0,
-    totalProfit: 0,
-    totalOrders: 0,
-    avgOrderValue: 0,
-  };
+  return (
+    summary[0] || {
+      totalRevenue: 0,
+      totalCost: 0,
+      totalProfit: 0,
+      totalOrders: 0,
+      avgOrderValue: 0,
+    }
+  );
 };
 
-// Indexes
+// Indexes - REMOVED DUPLICATE orderNumber index (no longer using index: true in schema)
+// Now using only schema.index() for all indexes
 orderSchema.index({ orderNumber: 1 });
 orderSchema.index({ orderStatus: 1 });
 orderSchema.index({ paymentStatus: 1 });

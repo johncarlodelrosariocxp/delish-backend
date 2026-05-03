@@ -1,7 +1,8 @@
-// controllers/orderController.js
 const createHttpError = require("http-errors");
 const Order = require("../models/orderModel");
 const Expense = require("../models/Expense");
+const Inventory = require("../models/Inventory");
+const { Menu } = require("../models/menuModel");
 const mongoose = require("mongoose");
 
 const addOrder = async (req, res, next) => {
@@ -16,30 +17,79 @@ const addOrder = async (req, res, next) => {
     let totalOrderCost = 0;
     let totalRevenue = 0;
     const usedExpensesList = [];
+    const inventoryDeductions = [];
 
     for (const item of req.body.items) {
-      const expenseItem = await Expense.findOne({ 
-        itemName: { $regex: new RegExp(`^${item.name}$`, "i") },
-        isActive: true,
-        remainingQuantity: { $gt: 0 }
-      });
-
       let costPerUnit = 0;
       let expenseId = null;
       let actualCost = 0;
+      let inventoryDeduction = null;
 
-      if (expenseItem) {
-        const usedStock = await expenseItem.useStock(item.quantity);
-        costPerUnit = usedStock.costPerUnit;
-        expenseId = expenseItem._id;
-        actualCost = usedStock.totalCost;
-        usedExpensesList.push(usedStock);
+      // First, try to find if this menu item has inventory requirements
+      const menuItem = await findMenuItemByName(item.name);
+
+      if (
+        menuItem &&
+        menuItem.trackInventory &&
+        menuItem.inventoryRequirements &&
+        menuItem.inventoryRequirements.length > 0
+      ) {
+        // DEDUCT FROM INVENTORY
+        console.log(
+          `📦 Deducting inventory for: ${item.name} x${item.quantity}`,
+        );
+
+        for (const req of menuItem.inventoryRequirements) {
+          const inventoryItem = await Inventory.findById(req.inventoryItemId);
+
+          if (!inventoryItem) {
+            throw new Error(
+              `Inventory item ${req.inventoryItemName} not found for ${item.name}`,
+            );
+          }
+
+          const requiredQty = req.quantityPerServing * item.quantity;
+
+          if (inventoryItem.remainingQuantity < requiredQty) {
+            throw new Error(
+              `Insufficient ${inventoryItem.itemName} for ${item.name}. ` +
+                `Available: ${inventoryItem.remainingQuantity} ${inventoryItem.unit}, ` +
+                `Required: ${requiredQty} ${req.unit}`,
+            );
+          }
+
+          const deduction = await inventoryItem.useStock(
+            requiredQty,
+            item.name,
+          );
+          inventoryDeductions.push(deduction);
+
+          // Use inventory cost for pricing
+          costPerUnit = inventoryItem.unitPrice;
+          expenseId = inventoryItem._id;
+          actualCost += deduction.totalCost;
+        }
+      } else {
+        // Fallback to Expense model (old system)
+        const expenseItem = await Expense.findOne({
+          itemName: { $regex: new RegExp(`^${item.name}$`, "i") },
+          isActive: true,
+          remainingQuantity: { $gt: 0 },
+        });
+
+        if (expenseItem) {
+          const usedStock = await expenseItem.useStock(item.quantity);
+          costPerUnit = usedStock.costPerUnit;
+          expenseId = expenseItem._id;
+          actualCost = usedStock.totalCost;
+          usedExpensesList.push(usedStock);
+        }
       }
 
       const itemTotalCost = actualCost;
       const itemPrice = item.price || item.pricePerQuantity || 0;
       const itemRevenue = itemPrice * item.quantity;
-      
+
       totalOrderCost += itemTotalCost;
       totalRevenue += itemRevenue;
 
@@ -79,20 +129,35 @@ const addOrder = async (req, res, next) => {
 
     res.status(201).json({
       success: true,
-      message: "Order created! Stock deducted from expenses!",
+      message: "Order created! Stock deducted from inventory!",
       data: populatedOrder,
       summary: {
         revenue: totalAmount,
         cost: totalOrderCost,
         profit: profit,
-        usedExpenses: usedExpensesList
-      }
+        usedExpenses: usedExpensesList,
+        inventoryDeductions: inventoryDeductions,
+      },
     });
   } catch (error) {
     console.error("Error creating order:", error);
     next(error);
   }
 };
+
+// Helper function to find menu item by name
+async function findMenuItemByName(itemName) {
+  const menus = await Menu.find();
+  for (const menu of menus) {
+    const item = menu.items.find(
+      (i) => i.name.toLowerCase() === itemName.toLowerCase(),
+    );
+    if (item) {
+      return { ...item.toObject(), menuId: menu.id };
+    }
+  }
+  return null;
+}
 
 const getOrderById = async (req, res, next) => {
   try {
@@ -174,7 +239,7 @@ const updateOrder = async (req, res, next) => {
       order = await Order.findOneAndUpdate(
         { _id: id, user: req.user._id },
         { orderStatus },
-        { new: true }
+        { new: true },
       ).populate("table");
     }
 
@@ -193,87 +258,106 @@ const updateOrder = async (req, res, next) => {
   }
 };
 
-// ========== FIXED DELETE FUNCTION - COMPLETELY REWRITTEN ==========
+// DELETE ORDER FUNCTION - also restores inventory
 const deleteOrder = async (req, res, next) => {
   try {
     const { id } = req.params;
 
     console.log(`========== DELETE ORDER REQUEST ==========`);
     console.log(`Order ID: ${id}`);
-    console.log(`User ID: ${req.user?._id}`);
-    console.log(`User Role: ${req.user?.role}`);
-    console.log(`Request timestamp: ${new Date().toISOString()}`);
 
-    // Validate ID format
     if (!mongoose.Types.ObjectId.isValid(id)) {
       console.log(`❌ Invalid ID format: ${id}`);
       return res.status(400).json({
         success: false,
-        message: "Invalid order ID format! Please provide a valid MongoDB ObjectId."
+        message:
+          "Invalid order ID format! Please provide a valid MongoDB ObjectId.",
       });
     }
 
-    // Find the order first
     const order = await Order.findById(id);
-    
+
     if (!order) {
       console.log(`❌ Order not found with ID: ${id}`);
       return res.status(404).json({
         success: false,
-        message: `Order with ID ${id} not found! It may have been already deleted.`
+        message: `Order with ID ${id} not found! It may have been already deleted.`,
       });
     }
 
     console.log(`✅ Found order: ${order._id}`);
-    console.log(`Order number: ${order.orderNumber}`);
-    console.log(`Order status: ${order.orderStatus}`);
-    console.log(`Order amount: ${order.totalAmount}`);
 
-    // Delete the order - NO ROLE RESTRICTION
+    // RESTORE INVENTORY that was deducted
+    for (const item of order.items) {
+      if (item.expenseId && item.costPerUnit > 0) {
+        // Try to restore to Inventory first
+        const inventoryItem = await Inventory.findById(item.expenseId);
+        if (inventoryItem) {
+          // Restore inventory stock
+          inventoryItem.usedQuantity -= item.quantity;
+          inventoryItem.remainingQuantity =
+            inventoryItem.quantity - inventoryItem.usedQuantity;
+          await inventoryItem.save();
+          console.log(`✅ Restored ${item.quantity} ${item.name} to inventory`);
+        } else {
+          // Fallback to Expense model
+          const expenseItem = await Expense.findById(item.expenseId);
+          if (expenseItem) {
+            expenseItem.usedQuantity -= item.quantity;
+            expenseItem.remainingQuantity =
+              expenseItem.quantity - expenseItem.usedQuantity;
+            await expenseItem.save();
+            console.log(
+              `✅ Restored ${item.quantity} ${item.name} to expenses`,
+            );
+          }
+        }
+      }
+    }
+
     const deletedOrder = await Order.findByIdAndDelete(id);
 
     if (!deletedOrder) {
       console.log(`❌ Failed to delete order: ${id}`);
       return res.status(500).json({
         success: false,
-        message: "Failed to delete order. Please try again."
+        message: "Failed to delete order. Please try again.",
       });
     }
 
     console.log(`✅ SUCCESSFULLY DELETED ORDER: ${id}`);
-    console.log(`Deleted by: ${req.user._id} (${req.user.role})`);
     console.log(`=========================================`);
 
     res.status(200).json({
       success: true,
-      message: "Order permanently deleted from the system!",
+      message: "Order permanently deleted! Inventory has been restored.",
       data: {
         deletedOrder: {
           _id: deletedOrder._id,
           orderNumber: deletedOrder.orderNumber,
           totalAmount: deletedOrder.totalAmount,
-          customerName: deletedOrder.customerDetails?.name || "Walk-in Customer",
+          customerName:
+            deletedOrder.customerDetails?.name || "Walk-in Customer",
           orderStatus: deletedOrder.orderStatus,
-          createdAt: deletedOrder.createdAt
+          createdAt: deletedOrder.createdAt,
         },
         deletedAt: new Date().toISOString(),
         deletedBy: {
           id: req.user._id,
           email: req.user.email,
-          role: req.user.role
-        }
-      }
+          role: req.user.role,
+        },
+      },
     });
   } catch (error) {
     console.error(`❌ ERROR IN DELETE ORDER:`, error);
     res.status(500).json({
       success: false,
       message: "Internal server error while deleting order",
-      error: error.message
+      error: error.message,
     });
   }
 };
-// ========== END OF FIXED DELETE FUNCTION ==========
 
 const getOrderStats = async (req, res, next) => {
   try {
@@ -300,12 +384,15 @@ const getOrderStats = async (req, res, next) => {
       },
     ]);
 
-    const stats = revenueStats.length > 0 ? revenueStats[0] : {
-      totalRevenue: 0,
-      totalCost: 0,
-      totalProfit: 0,
-      averageOrderValue: 0,
-    };
+    const stats =
+      revenueStats.length > 0
+        ? revenueStats[0]
+        : {
+            totalRevenue: 0,
+            totalCost: 0,
+            totalProfit: 0,
+            averageOrderValue: 0,
+          };
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -415,13 +502,16 @@ const getAllOrdersAdmin = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: orders,
-      summary: stats.length > 0 ? stats[0] : {
-        totalRevenue: 0,
-        totalCost: 0,
-        totalProfit: 0,
-        totalOrders: 0,
-        avgOrderValue: 0,
-      },
+      summary:
+        stats.length > 0
+          ? stats[0]
+          : {
+              totalRevenue: 0,
+              totalCost: 0,
+              totalProfit: 0,
+              totalOrders: 0,
+              avgOrderValue: 0,
+            },
       total: orders.length,
       allOrdersCount: total,
     });
@@ -464,9 +554,15 @@ const getAllSalesStats = async (req, res, next) => {
     ] = await Promise.all([
       Order.countDocuments(),
       Order.countDocuments({ createdAt: { $gte: today, $lt: tomorrow } }),
-      Order.countDocuments({ createdAt: { $gte: startOfWeek, $lt: endOfWeek } }),
-      Order.countDocuments({ createdAt: { $gte: startOfLastWeek, $lt: endOfLastWeek } }),
-      Order.aggregate([{ $group: { _id: null, total: { $sum: "$totalAmount" } } }]),
+      Order.countDocuments({
+        createdAt: { $gte: startOfWeek, $lt: endOfWeek },
+      }),
+      Order.countDocuments({
+        createdAt: { $gte: startOfLastWeek, $lt: endOfLastWeek },
+      }),
+      Order.aggregate([
+        { $group: { _id: null, total: { $sum: "$totalAmount" } } },
+      ]),
       Order.aggregate([
         { $match: { createdAt: { $gte: today, $lt: tomorrow } } },
         { $group: { _id: null, total: { $sum: "$totalAmount" } } },
@@ -476,7 +572,9 @@ const getAllSalesStats = async (req, res, next) => {
         { $group: { _id: null, total: { $sum: "$totalAmount" } } },
       ]),
       Order.aggregate([
-        { $match: { createdAt: { $gte: startOfLastWeek, $lt: endOfLastWeek } } },
+        {
+          $match: { createdAt: { $gte: startOfLastWeek, $lt: endOfLastWeek } },
+        },
         { $group: { _id: null, total: { $sum: "$totalAmount" } } },
       ]),
       Order.aggregate([
@@ -485,7 +583,9 @@ const getAllSalesStats = async (req, res, next) => {
           $group: {
             _id: "$items.name",
             totalQuantity: { $sum: "$items.quantity" },
-            totalRevenue: { $sum: { $multiply: ["$items.quantity", "$items.price"] } },
+            totalRevenue: {
+              $sum: { $multiply: ["$items.quantity", "$items.price"] },
+            },
           },
         },
         { $sort: { totalQuantity: -1 } },
@@ -493,13 +593,23 @@ const getAllSalesStats = async (req, res, next) => {
       ]),
     ]);
 
-    const ordersWeekPercentage = lastWeekOrders > 0
-      ? Math.round(((weekOrders - lastWeekOrders) / lastWeekOrders) * 100)
-      : weekOrders > 0 ? 100 : 0;
+    const ordersWeekPercentage =
+      lastWeekOrders > 0
+        ? Math.round(((weekOrders - lastWeekOrders) / lastWeekOrders) * 100)
+        : weekOrders > 0
+          ? 100
+          : 0;
 
-    const revenueWeekPercentage = lastWeekRevenue.length > 0 && lastWeekRevenue[0].total > 0
-      ? Math.round(((weekRevenue[0]?.total || 0 - lastWeekRevenue[0].total) / lastWeekRevenue[0].total) * 100)
-      : weekRevenue.length > 0 ? 100 : 0;
+    const revenueWeekPercentage =
+      lastWeekRevenue.length > 0 && lastWeekRevenue[0].total > 0
+        ? Math.round(
+            ((weekRevenue[0]?.total || 0 - lastWeekRevenue[0].total) /
+              lastWeekRevenue[0].total) *
+              100,
+          )
+        : weekRevenue.length > 0
+          ? 100
+          : 0;
 
     res.status(200).json({
       success: true,
@@ -513,7 +623,8 @@ const getAllSalesStats = async (req, res, next) => {
         weekRevenue: weekRevenue.length > 0 ? weekRevenue[0].total : 0,
         revenueWeekPercentage,
         topItems: topItems || [],
-        averageOrderValue: totalOrders > 0 ? (totalRevenue[0]?.total || 0) / totalOrders : 0,
+        averageOrderValue:
+          totalOrders > 0 ? (totalRevenue[0]?.total || 0) / totalOrders : 0,
       },
     });
   } catch (error) {
@@ -579,13 +690,16 @@ const getCashierOrders = async (req, res, next) => {
           limit: parseInt(limit),
           pages: Math.ceil(totalOrders / parseInt(limit)),
         },
-        summary: cashierStats.length > 0 ? cashierStats[0] : {
-          totalOrders: 0,
-          totalRevenue: 0,
-          totalCost: 0,
-          totalProfit: 0,
-          averageOrderValue: 0,
-        },
+        summary:
+          cashierStats.length > 0
+            ? cashierStats[0]
+            : {
+                totalOrders: 0,
+                totalRevenue: 0,
+                totalCost: 0,
+                totalProfit: 0,
+                averageOrderValue: 0,
+              },
       },
     });
   } catch (error) {
@@ -631,13 +745,16 @@ const getTodaysOrdersSummary = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: {
-        summary: todayStats.length > 0 ? todayStats[0] : {
-          orderCount: 0,
-          totalRevenue: 0,
-          totalCost: 0,
-          totalProfit: 0,
-          averageOrderValue: 0,
-        },
+        summary:
+          todayStats.length > 0
+            ? todayStats[0]
+            : {
+                orderCount: 0,
+                totalRevenue: 0,
+                totalCost: 0,
+                totalProfit: 0,
+                averageOrderValue: 0,
+              },
         recentOrders: todaysOrders,
       },
     });

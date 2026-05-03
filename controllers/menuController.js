@@ -1,4 +1,5 @@
 const { Menu, ItemFlavor } = require("../models/menuModel");
+const Inventory = require("../models/Inventory");
 
 // ==================== MENU CONTROLLERS ====================
 
@@ -6,10 +7,53 @@ const { Menu, ItemFlavor } = require("../models/menuModel");
 exports.getAllMenus = async (req, res) => {
   try {
     const menus = await Menu.find().sort({ id: 1 });
+
+    // Enrich menu items with current inventory stock info
+    const enrichedMenus = await Promise.all(
+      menus.map(async (menu) => {
+        const enrichedItems = await Promise.all(
+          menu.items.map(async (item) => {
+            if (item.trackInventory && item.inventoryRequirements.length > 0) {
+              let canFulfill = true;
+              let stockStatus = [];
+
+              for (const req of item.inventoryRequirements) {
+                const invItem = await Inventory.findById(req.inventoryItemId);
+                if (invItem) {
+                  const requiredQty = req.quantityPerServing;
+                  const isAvailable = invItem.remainingQuantity >= requiredQty;
+                  canFulfill = canFulfill && isAvailable;
+                  stockStatus.push({
+                    itemName: invItem.itemName,
+                    required: requiredQty,
+                    available: invItem.remainingQuantity,
+                    unit: invItem.unit,
+                    isAvailable: isAvailable,
+                  });
+                }
+              }
+
+              return {
+                ...item.toObject(),
+                canFulfill,
+                stockStatus,
+              };
+            }
+            return item.toObject();
+          }),
+        );
+
+        return {
+          ...menu.toObject(),
+          items: enrichedItems,
+        };
+      }),
+    );
+
     res.status(200).json({
       success: true,
       count: menus.length,
-      menus,
+      menus: enrichedMenus,
     });
   } catch (error) {
     console.error("❌ Get all menus error:", error);
@@ -33,9 +77,50 @@ exports.getMenuById = async (req, res) => {
       });
     }
 
+    // Enrich items with inventory info
+    const enrichedItems = await Promise.all(
+      menu.items.map(async (item) => {
+        if (item.trackInventory && item.inventoryRequirements.length > 0) {
+          let canFulfill = true;
+          let stockStatus = [];
+          let totalCost = 0;
+
+          for (const req of item.inventoryRequirements) {
+            const invItem = await Inventory.findById(req.inventoryItemId);
+            if (invItem) {
+              const requiredQty = req.quantityPerServing;
+              const isAvailable = invItem.remainingQuantity >= requiredQty;
+              canFulfill = canFulfill && isAvailable;
+              totalCost += requiredQty * invItem.unitPrice;
+              stockStatus.push({
+                itemName: invItem.itemName,
+                required: requiredQty,
+                available: invItem.remainingQuantity,
+                unit: invItem.unit,
+                isAvailable: isAvailable,
+                costPerUnit: invItem.unitPrice,
+                cost: requiredQty * invItem.unitPrice,
+              });
+            }
+          }
+
+          return {
+            ...item.toObject(),
+            canFulfill,
+            stockStatus,
+            currentIngredientCost: totalCost,
+          };
+        }
+        return item.toObject();
+      }),
+    );
+
     res.status(200).json({
       success: true,
-      menu,
+      menu: {
+        ...menu.toObject(),
+        items: enrichedItems,
+      },
     });
   } catch (error) {
     console.error("❌ Get menu by ID error:", error);
@@ -61,11 +146,37 @@ exports.getMenusByTag = async (req, res) => {
 
     const menus = await Menu.find({ tag }).sort({ id: 1 });
 
+    // Enrich with inventory info
+    const enrichedMenus = await Promise.all(
+      menus.map(async (menu) => {
+        const enrichedItems = await Promise.all(
+          menu.items.map(async (item) => {
+            if (item.trackInventory && item.inventoryRequirements.length > 0) {
+              let canFulfill = true;
+              for (const req of item.inventoryRequirements) {
+                const invItem = await Inventory.findById(req.inventoryItemId);
+                if (
+                  invItem &&
+                  invItem.remainingQuantity < req.quantityPerServing
+                ) {
+                  canFulfill = false;
+                  break;
+                }
+              }
+              return { ...item.toObject(), canFulfill };
+            }
+            return item.toObject();
+          }),
+        );
+        return { ...menu.toObject(), items: enrichedItems };
+      }),
+    );
+
     res.status(200).json({
       success: true,
       count: menus.length,
       tag,
-      menus,
+      menus: enrichedMenus,
     });
   } catch (error) {
     console.error("❌ Get menus by tag error:", error);
@@ -82,7 +193,6 @@ exports.createMenu = async (req, res) => {
   try {
     const { id, name, bgColor, icon, tag, items } = req.body;
 
-    // Check if menu with this ID already exists
     const existingMenu = await Menu.findOne({ id });
     if (existingMenu) {
       return res.status(400).json({
@@ -189,12 +299,40 @@ exports.getMenuItems = async (req, res) => {
       });
     }
 
+    // Enrich items with inventory info
+    const enrichedItems = await Promise.all(
+      menu.items.map(async (item) => {
+        if (item.trackInventory && item.inventoryRequirements.length > 0) {
+          let canFulfill = true;
+          let stockStatus = [];
+
+          for (const req of item.inventoryRequirements) {
+            const invItem = await Inventory.findById(req.inventoryItemId);
+            if (invItem) {
+              const isAvailable =
+                invItem.remainingQuantity >= req.quantityPerServing;
+              canFulfill = canFulfill && isAvailable;
+              stockStatus.push({
+                itemName: invItem.itemName,
+                required: req.quantityPerServing,
+                available: invItem.remainingQuantity,
+                isAvailable: isAvailable,
+              });
+            }
+          }
+
+          return { ...item.toObject(), canFulfill, stockStatus };
+        }
+        return item.toObject();
+      }),
+    );
+
     res.status(200).json({
       success: true,
       menuId: menu.id,
       menuName: menu.name,
-      count: menu.items.length,
-      items: menu.items,
+      count: enrichedItems.length,
+      items: enrichedItems,
     });
   } catch (error) {
     console.error("❌ Get menu items error:", error);
@@ -229,9 +367,46 @@ exports.getMenuItem = async (req, res) => {
       });
     }
 
+    // Enrich with inventory info
+    let enrichedItem = item.toObject();
+    if (item.trackInventory && item.inventoryRequirements.length > 0) {
+      let canFulfill = true;
+      let stockStatus = [];
+      let totalIngredientCost = 0;
+
+      for (const req of item.inventoryRequirements) {
+        const invItem = await Inventory.findById(req.inventoryItemId);
+        if (invItem) {
+          const requiredQty = req.quantityPerServing;
+          const isAvailable = invItem.remainingQuantity >= requiredQty;
+          canFulfill = canFulfill && isAvailable;
+          const cost = requiredQty * invItem.unitPrice;
+          totalIngredientCost += cost;
+          stockStatus.push({
+            inventoryItemId: req.inventoryItemId,
+            inventoryItemName: invItem.itemName,
+            requiredQuantity: requiredQty,
+            availableQuantity: invItem.remainingQuantity,
+            unit: invItem.unit,
+            unitPrice: invItem.unitPrice,
+            cost: cost,
+            isAvailable: isAvailable,
+          });
+        }
+      }
+
+      enrichedItem = {
+        ...enrichedItem,
+        canFulfill,
+        stockStatus,
+        totalIngredientCost,
+        suggestedPrice: totalIngredientCost * 3, // Suggested 300% markup
+      };
+    }
+
     res.status(200).json({
       success: true,
-      item,
+      item: enrichedItem,
     });
   } catch (error) {
     console.error("❌ Get menu item error:", error);
@@ -257,7 +432,6 @@ exports.addMenuItem = async (req, res) => {
 
     const newItem = req.body;
 
-    // Check if item with this ID already exists in this menu
     const existingItem = menu.items.find((item) => item.id === newItem.id);
     if (existingItem) {
       return res.status(400).json({
@@ -266,8 +440,53 @@ exports.addMenuItem = async (req, res) => {
       });
     }
 
+    // If item has inventory requirements, validate them
+    if (newItem.trackInventory && newItem.inventoryRequirements) {
+      for (const req of newItem.inventoryRequirements) {
+        const invItem = await Inventory.findById(req.inventoryItemId);
+        if (!invItem) {
+          return res.status(400).json({
+            success: false,
+            message: `Inventory item ${req.inventoryItemName} not found`,
+          });
+        }
+        req.inventoryItemName = invItem.itemName;
+        req.unit = invItem.unit;
+      }
+
+      // Calculate total ingredient cost
+      let totalCost = 0;
+      for (const req of newItem.inventoryRequirements) {
+        const invItem = await Inventory.findById(req.inventoryItemId);
+        if (invItem) {
+          totalCost += req.quantityPerServing * invItem.unitPrice;
+        }
+      }
+      newItem.totalIngredientCost = totalCost;
+    }
+
     menu.items.push(newItem);
     await menu.save();
+
+    // Also update inventory items to link back to this menu item
+    if (newItem.trackInventory && newItem.inventoryRequirements) {
+      for (const req of newItem.inventoryRequirements) {
+        const invItem = await Inventory.findById(req.inventoryItemId);
+        if (invItem) {
+          const existingLink = invItem.linkedMenuItems.find(
+            (link) => link.menuItemId === newItem.id,
+          );
+          if (!existingLink) {
+            invItem.linkedMenuItems.push({
+              menuItemId: newItem.id,
+              menuItemName: newItem.name,
+              quantityPerUnit: req.quantityPerServing,
+            });
+            await invItem.save();
+          }
+        }
+      }
+    }
 
     res.status(201).json({
       success: true,
@@ -307,11 +526,51 @@ exports.updateMenuItem = async (req, res) => {
       });
     }
 
-    // Update item
-    menu.items[itemIndex] = {
-      ...menu.items[itemIndex].toObject(),
-      ...req.body,
-    };
+    const updateData = req.body;
+
+    // If updating inventory requirements, validate and recalculate cost
+    if (
+      updateData.inventoryRequirements ||
+      updateData.trackInventory !== undefined
+    ) {
+      const currentItem = menu.items[itemIndex];
+
+      if (updateData.trackInventory !== undefined) {
+        currentItem.trackInventory = updateData.trackInventory;
+      }
+
+      if (updateData.inventoryRequirements) {
+        currentItem.inventoryRequirements = updateData.inventoryRequirements;
+
+        // Validate and calculate total cost
+        let totalCost = 0;
+        for (const req of currentItem.inventoryRequirements) {
+          const invItem = await Inventory.findById(req.inventoryItemId);
+          if (invItem) {
+            req.inventoryItemName = invItem.itemName;
+            req.unit = invItem.unit;
+            totalCost += req.quantityPerServing * invItem.unitPrice;
+          }
+        }
+        currentItem.totalIngredientCost = totalCost;
+      }
+
+      // Update other fields
+      Object.keys(updateData).forEach((key) => {
+        if (key !== "inventoryRequirements" && key !== "trackInventory") {
+          currentItem[key] = updateData[key];
+        }
+      });
+
+      menu.items[itemIndex] = currentItem;
+    } else {
+      // Regular update without inventory changes
+      menu.items[itemIndex] = {
+        ...menu.items[itemIndex].toObject(),
+        ...updateData,
+      };
+    }
+
     await menu.save();
 
     res.status(200).json({
@@ -341,6 +600,10 @@ exports.deleteMenuItem = async (req, res) => {
       });
     }
 
+    const deletedItem = menu.items.find(
+      (item) => item.id === parseInt(req.params.itemId),
+    );
+
     const itemIndex = menu.items.findIndex(
       (item) => item.id === parseInt(req.params.itemId),
     );
@@ -350,6 +613,23 @@ exports.deleteMenuItem = async (req, res) => {
         success: false,
         message: "Item not found",
       });
+    }
+
+    // Remove links from inventory items
+    if (
+      deletedItem &&
+      deletedItem.trackInventory &&
+      deletedItem.inventoryRequirements
+    ) {
+      for (const req of deletedItem.inventoryRequirements) {
+        const invItem = await Inventory.findById(req.inventoryItemId);
+        if (invItem) {
+          invItem.linkedMenuItems = invItem.linkedMenuItems.filter(
+            (link) => link.menuItemId !== deletedItem.id,
+          );
+          await invItem.save();
+        }
+      }
     }
 
     menu.items.splice(itemIndex, 1);
@@ -364,6 +644,88 @@ exports.deleteMenuItem = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to delete menu item",
+      error: error.message,
+    });
+  }
+};
+
+// Check if menu item can be fulfilled (inventory check)
+exports.checkMenuItemAvailability = async (req, res) => {
+  try {
+    const { menuId, itemId, quantity = 1 } = req.params;
+
+    const menu = await Menu.findOne({ id: parseInt(menuId) });
+    if (!menu) {
+      return res.status(404).json({
+        success: false,
+        message: "Menu not found",
+      });
+    }
+
+    const item = menu.items.find((i) => i.id === parseInt(itemId));
+    if (!item) {
+      return res.status(404).json({
+        success: false,
+        message: "Item not found",
+      });
+    }
+
+    if (!item.trackInventory || item.inventoryRequirements.length === 0) {
+      return res.json({
+        success: true,
+        available: true,
+        message: "Item does not require inventory tracking",
+      });
+    }
+
+    const requirements = [];
+    let canFulfill = true;
+    let totalCost = 0;
+
+    for (const req of item.inventoryRequirements) {
+      const invItem = await Inventory.findById(req.inventoryItemId);
+      if (!invItem) {
+        requirements.push({
+          itemName: req.inventoryItemName,
+          required: req.quantityPerServing * quantity,
+          available: 0,
+          availableStock: false,
+        });
+        canFulfill = false;
+      } else {
+        const requiredQty = req.quantityPerServing * quantity;
+        const isAvailable = invItem.remainingQuantity >= requiredQty;
+        canFulfill = canFulfill && isAvailable;
+        totalCost += requiredQty * invItem.unitPrice;
+
+        requirements.push({
+          itemName: invItem.itemName,
+          required: requiredQty,
+          available: invItem.remainingQuantity,
+          unit: invItem.unit,
+          costPerUnit: invItem.unitPrice,
+          totalCost: requiredQty * invItem.unitPrice,
+          availableStock: isAvailable,
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        itemName: item.name,
+        quantity: quantity,
+        available: canFulfill,
+        totalIngredientCost: totalCost,
+        requirements: requirements,
+        suggestedSellingPrice: totalCost * 3,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Check availability error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to check availability",
       error: error.message,
     });
   }
@@ -425,7 +787,6 @@ exports.createItemFlavor = async (req, res) => {
   try {
     const { label, price, category } = req.body;
 
-    // Check if flavor already exists
     const existingFlavor = await ItemFlavor.findOne({ label, category });
     if (existingFlavor) {
       return res.status(400).json({
@@ -525,7 +886,6 @@ exports.importMenuData = async (req, res) => {
     let importedMenus = [];
     let importedFlavors = [];
 
-    // Import regular flavors first
     if (regularFlavorOptions && regularFlavorOptions.length > 0) {
       await ItemFlavor.deleteMany({ category: "regular" });
       const regularFlavors = regularFlavorOptions.map((flavor) => ({
@@ -535,7 +895,6 @@ exports.importMenuData = async (req, res) => {
       importedFlavors = await ItemFlavor.insertMany(regularFlavors);
     }
 
-    // Import keto flavors
     if (ketoFlavorOptions && ketoFlavorOptions.length > 0) {
       await ItemFlavor.deleteMany({ category: "keto" });
       const ketoFlavors = ketoFlavorOptions.map((flavor) => ({
@@ -548,7 +907,6 @@ exports.importMenuData = async (req, res) => {
       ];
     }
 
-    // Import menus
     if (menus && menus.length > 0) {
       await Menu.deleteMany({});
       importedMenus = await Menu.insertMany(menus);
