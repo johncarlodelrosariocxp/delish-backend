@@ -77,7 +77,7 @@ exports.getInventoryById = async (req, res) => {
   }
 };
 
-// Create new inventory item
+// Create new inventory item - FIXED
 exports.createInventory = async (req, res) => {
   try {
     const {
@@ -96,41 +96,61 @@ exports.createInventory = async (req, res) => {
 
     console.log("📦 Creating inventory item:", req.body);
 
-    if (!itemName || !quantity || !unitPrice) {
+    // Validation
+    if (!itemName || !itemName.trim()) {
       return res.status(400).json({
         success: false,
-        message: "Item name, quantity, and unit price are required",
+        message: "Item name is required",
       });
     }
 
+    if (!quantity || quantity <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Quantity must be greater than 0",
+      });
+    }
+
+    if (!unitPrice || unitPrice <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Unit price must be greater than 0",
+      });
+    }
+
+    // Check for existing item (case insensitive)
     const existingItem = await Inventory.findOne({
-      itemName: itemName.trim(),
+      itemName: { $regex: new RegExp(`^${itemName.trim()}$`, "i") },
       isActive: true,
     });
+
     if (existingItem) {
       return res.status(400).json({
         success: false,
-        message: "Inventory item with this name already exists",
+        message: `Inventory item "${itemName}" already exists`,
       });
     }
 
-    const totalCost = Number(quantity) * Number(unitPrice);
+    const numQuantity = Number(quantity);
+    const numUnitPrice = Number(unitPrice);
+    const totalCost = numQuantity * numUnitPrice;
 
     const item = new Inventory({
       itemName: itemName.trim(),
       description: description || "",
       category: category || "Ingredients",
-      quantity: Number(quantity),
+      quantity: numQuantity,
       usedQuantity: 0,
-      remainingQuantity: Number(quantity),
+      remainingQuantity: numQuantity,
       unit: unit || "pcs",
-      unitPrice: Number(unitPrice),
+      unitPrice: numUnitPrice,
       totalCost: totalCost,
       supplier: supplier || "",
       datePurchased: datePurchased || new Date(),
       receiptNumber: receiptNumber || "",
       notes: notes || "",
       linkedMenuItems: linkedMenuItems || [],
+      isActive: true,
     });
 
     await item.save();
@@ -146,8 +166,7 @@ exports.createInventory = async (req, res) => {
     console.error("Error creating inventory item:", error);
     res.status(400).json({
       success: false,
-      message: "Error creating inventory item",
-      error: error.message,
+      message: error.message || "Error creating inventory item",
     });
   }
 };
@@ -190,24 +209,20 @@ exports.updateInventory = async (req, res) => {
     }
 
     // Update other fields
-    Object.keys(updateData).forEach((key) => {
-      if (
-        key !== "_id" &&
-        key !== "__v" &&
-        key !== "createdAt" &&
-        key !== "updatedAt" &&
-        key !== "quantity"
-      ) {
-        if (key === "unitPrice" && updateData.unitPrice) {
-          item.unitPrice = Number(updateData.unitPrice);
-          item.totalCost = item.quantity * item.unitPrice;
-        } else if (key === "linkedMenuItems") {
-          item.linkedMenuItems = updateData.linkedMenuItems;
-        } else {
-          item[key] = updateData[key];
-        }
-      }
-    });
+    if (updateData.unitPrice !== undefined) {
+      item.unitPrice = Number(updateData.unitPrice);
+      item.totalCost = item.quantity * item.unitPrice;
+    }
+    if (updateData.category !== undefined) item.category = updateData.category;
+    if (updateData.unit !== undefined) item.unit = updateData.unit;
+    if (updateData.supplier !== undefined) item.supplier = updateData.supplier;
+    if (updateData.description !== undefined)
+      item.description = updateData.description;
+    if (updateData.notes !== undefined) item.notes = updateData.notes;
+    if (updateData.receiptNumber !== undefined)
+      item.receiptNumber = updateData.receiptNumber;
+    if (updateData.linkedMenuItems !== undefined)
+      item.linkedMenuItems = updateData.linkedMenuItems;
 
     await item.save();
 
@@ -277,7 +292,6 @@ exports.updateStock = async (req, res) => {
     }
 
     const oldRemaining = item.remainingQuantity;
-    const oldQuantity = item.quantity;
 
     if (type === "add") {
       item.quantity += Number(quantity);
@@ -327,7 +341,7 @@ exports.getLowStock = async (req, res) => {
   try {
     const items = await Inventory.find({
       isActive: true,
-      remainingQuantity: { $gt: 0, $lte: 10 },
+      remainingQuantity: { $lte: 10, $gt: 0 },
     }).sort({ remainingQuantity: 1 });
 
     res.json({
@@ -487,6 +501,83 @@ exports.getInventoryUsageReport = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error getting inventory usage report",
+      error: error.message,
+    });
+  }
+};
+
+// Get financial summary
+exports.getFinancialSummary = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+
+    const orderSummary = await Order.getFinancialSummary(startDate, endDate);
+
+    const inventoryItems = await Inventory.find({ isActive: true });
+    const inventoryValue = inventoryItems.reduce(
+      (sum, item) => sum + item.remainingQuantity * item.unitPrice,
+      0,
+    );
+    const totalInventoryPurchased = inventoryItems.reduce(
+      (sum, item) => sum + item.totalCost,
+      0,
+    );
+    const totalInventoryUsed = inventoryItems.reduce(
+      (sum, item) => sum + item.usedQuantity * item.unitPrice,
+      0,
+    );
+
+    const topSelling = await Order.getTopSellingItems(10);
+
+    const dateRange = {};
+    if (startDate) dateRange.$gte = new Date(startDate);
+    if (endDate) dateRange.$lte = new Date(endDate);
+
+    const dailySales = await Order.aggregate([
+      {
+        $match: {
+          orderStatus: "completed",
+          ...(Object.keys(dateRange).length && { createdAt: dateRange }),
+        },
+      },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+          revenue: { $sum: "$totalAmount" },
+          cost: { $sum: "$totalCost" },
+          profit: { $sum: "$profit" },
+          orders: { $sum: 1 },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        summary: {
+          totalRevenue: orderSummary.totalRevenue,
+          totalCost: orderSummary.totalCost,
+          totalProfit: orderSummary.totalProfit,
+          totalOrders: orderSummary.totalOrders,
+          averageOrderValue: orderSummary.avgOrderValue,
+          inventoryValue: inventoryValue,
+          totalInventoryPurchased: totalInventoryPurchased,
+          totalInventoryUsed: totalInventoryUsed,
+        },
+        topSellingItems: topSelling,
+        dailySales: dailySales,
+        dateRange: {
+          startDate: startDate || "all time",
+          endDate: endDate || "present",
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Error getting financial summary:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error getting financial summary",
       error: error.message,
     });
   }
