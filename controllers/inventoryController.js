@@ -38,19 +38,17 @@ exports.getInventory = async (req, res) => {
       success: true,
       data: items,
       count: items.length,
-      summary: {
-        totalValue: totalValue,
-        totalPurchased: totalPurchased,
-        totalUsed: totalUsed,
-      },
+      summary: { totalValue, totalPurchased, totalUsed },
     });
   } catch (error) {
     console.error("Error fetching inventory:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error fetching inventory",
-      error: error.message,
-    });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Error fetching inventory",
+        error: error.message,
+      });
   }
 };
 
@@ -59,25 +57,23 @@ exports.getInventoryById = async (req, res) => {
   try {
     const item = await Inventory.findById(req.params.id);
     if (!item) {
-      return res.status(404).json({
-        success: false,
-        message: "Item not found",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Item not found" });
     }
-    res.json({
-      success: true,
-      data: item,
-    });
+    res.json({ success: true, data: item });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Error fetching item",
-      error: error.message,
-    });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Error fetching item",
+        error: error.message,
+      });
   }
 };
 
-// Create new inventory item - FIXED
+// Create new inventory item
 exports.createInventory = async (req, res) => {
   try {
     const {
@@ -96,39 +92,36 @@ exports.createInventory = async (req, res) => {
 
     console.log("📦 Creating inventory item:", req.body);
 
-    // Validation
     if (!itemName || !itemName.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: "Item name is required",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Item name is required" });
     }
 
     if (!quantity || quantity <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Quantity must be greater than 0",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Quantity must be greater than 0" });
     }
 
     if (!unitPrice || unitPrice <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Unit price must be greater than 0",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Unit price must be greater than 0" });
     }
 
-    // Check for existing item (case insensitive)
     const existingItem = await Inventory.findOne({
       itemName: { $regex: new RegExp(`^${itemName.trim()}$`, "i") },
       isActive: true,
     });
 
     if (existingItem) {
-      return res.status(400).json({
-        success: false,
-        message: `Inventory item "${itemName}" already exists`,
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: `Inventory item "${itemName}" already exists`,
+        });
     }
 
     const numQuantity = Number(quantity);
@@ -154,20 +147,23 @@ exports.createInventory = async (req, res) => {
     });
 
     await item.save();
-
     console.log("✅ Inventory item created:", item);
 
-    res.status(201).json({
-      success: true,
-      message: "Inventory item added successfully",
-      data: item,
-    });
+    res
+      .status(201)
+      .json({
+        success: true,
+        message: "Inventory item added successfully",
+        data: item,
+      });
   } catch (error) {
     console.error("Error creating inventory item:", error);
-    res.status(400).json({
-      success: false,
-      message: error.message || "Error creating inventory item",
-    });
+    res
+      .status(400)
+      .json({
+        success: false,
+        message: error.message || "Error creating inventory item",
+      });
   }
 };
 
@@ -179,13 +175,11 @@ exports.updateInventory = async (req, res) => {
 
     const item = await Inventory.findById(id);
     if (!item) {
-      return res.status(404).json({
-        success: false,
-        message: "Item not found",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Item not found" });
     }
 
-    // Handle quantity updates
     if (
       updateData.quantity !== undefined &&
       updateData.quantity !== item.quantity
@@ -208,7 +202,6 @@ exports.updateInventory = async (req, res) => {
       }
     }
 
-    // Update other fields
     if (updateData.unitPrice !== undefined) {
       item.unitPrice = Number(updateData.unitPrice);
       item.totalCost = item.quantity * item.unitPrice;
@@ -233,11 +226,13 @@ exports.updateInventory = async (req, res) => {
     });
   } catch (error) {
     console.error("Error updating inventory item:", error);
-    res.status(400).json({
-      success: false,
-      message: "Error updating inventory item",
-      error: error.message,
-    });
+    res
+      .status(400)
+      .json({
+        success: false,
+        message: "Error updating inventory item",
+        error: error.message,
+      });
   }
 };
 
@@ -246,25 +241,23 @@ exports.deleteInventory = async (req, res) => {
   try {
     const item = await Inventory.findById(req.params.id);
     if (!item) {
-      return res.status(404).json({
-        success: false,
-        message: "Item not found",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Item not found" });
     }
 
     item.isActive = false;
     await item.save();
 
-    res.json({
-      success: true,
-      message: "Inventory item deleted successfully",
-    });
+    res.json({ success: true, message: "Inventory item deleted successfully" });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Error deleting inventory item",
-      error: error.message,
-    });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Error deleting inventory item",
+        error: error.message,
+      });
   }
 };
 
@@ -274,21 +267,17 @@ exports.updateStock = async (req, res) => {
     const { id } = req.params;
     const { quantity, type, reason } = req.body;
 
-    console.log("📦 Updating stock:", { id, quantity, type, reason });
-
     if (quantity === undefined || !type) {
-      return res.status(400).json({
-        success: false,
-        message: "Quantity and type are required",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Quantity and type are required" });
     }
 
     const item = await Inventory.findById(id);
     if (!item) {
-      return res.status(404).json({
-        success: false,
-        message: "Item not found",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Item not found" });
     }
 
     const oldRemaining = item.remainingQuantity;
@@ -306,10 +295,9 @@ exports.updateStock = async (req, res) => {
       item.usedQuantity += Number(quantity);
       item.remainingQuantity = item.quantity - item.usedQuantity;
     } else {
-      return res.status(400).json({
-        success: false,
-        message: "Type must be 'add' or 'remove'",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Type must be 'add' or 'remove'" });
     }
 
     item.totalCost = item.quantity * item.unitPrice;
@@ -320,7 +308,7 @@ exports.updateStock = async (req, res) => {
       message: `Stock ${type === "add" ? "added" : "removed"} successfully`,
       data: {
         itemName: item.itemName,
-        oldRemaining: oldRemaining,
+        oldRemaining,
         newRemaining: item.remainingQuantity,
         quantityChanged: quantity,
         reason: reason || "Manual adjustment",
@@ -328,11 +316,13 @@ exports.updateStock = async (req, res) => {
     });
   } catch (error) {
     console.error("Error updating stock:", error);
-    res.status(400).json({
-      success: false,
-      message: "Error updating stock",
-      error: error.message,
-    });
+    res
+      .status(400)
+      .json({
+        success: false,
+        message: "Error updating stock",
+        error: error.message,
+      });
   }
 };
 
@@ -343,18 +333,15 @@ exports.getLowStock = async (req, res) => {
       isActive: true,
       remainingQuantity: { $lte: 10, $gt: 0 },
     }).sort({ remainingQuantity: 1 });
-
-    res.json({
-      success: true,
-      data: items,
-      count: items.length,
-    });
+    res.json({ success: true, data: items, count: items.length });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Error fetching low stock items",
-      error: error.message,
-    });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Error fetching low stock items",
+        error: error.message,
+      });
   }
 };
 
@@ -366,10 +353,9 @@ exports.linkToMenuItems = async (req, res) => {
 
     const item = await Inventory.findById(id);
     if (!item) {
-      return res.status(404).json({
-        success: false,
-        message: "Inventory item not found",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Inventory item not found" });
     }
 
     item.linkedMenuItems = linkedMenuItems;
@@ -382,11 +368,13 @@ exports.linkToMenuItems = async (req, res) => {
     });
   } catch (error) {
     console.error("Error linking to menu items:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error linking to menu items",
-      error: error.message,
-    });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Error linking to menu items",
+        error: error.message,
+      });
   }
 };
 
@@ -397,7 +385,6 @@ exports.getInventoryValue = async (req, res) => {
       isActive: true,
       remainingQuantity: { $gt: 0 },
     });
-
     const totalInventoryValue = items.reduce(
       (sum, item) => sum + item.remainingQuantity * item.unitPrice,
       0,
@@ -412,19 +399,17 @@ exports.getInventoryValue = async (req, res) => {
 
     res.json({
       success: true,
-      data: {
-        totalInventoryValue: totalInventoryValue,
-        items: itemsList,
-        count: itemsList.length,
-      },
+      data: { totalInventoryValue, items: itemsList, count: itemsList.length },
     });
   } catch (error) {
     console.error("Error getting inventory value:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error getting inventory value",
-      error: error.message,
-    });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Error getting inventory value",
+        error: error.message,
+      });
   }
 };
 
@@ -432,7 +417,6 @@ exports.getInventoryValue = async (req, res) => {
 exports.getInventoryUsageReport = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
-
     let dateFilter = {};
     if (startDate || endDate) {
       dateFilter.createdAt = {};
@@ -444,7 +428,6 @@ exports.getInventoryUsageReport = async (req, res) => {
       orderStatus: "completed",
       ...dateFilter,
     });
-
     const inventoryUsage = {};
     const inventoryItems = await Inventory.find({ isActive: true });
 
@@ -488,7 +471,7 @@ exports.getInventoryUsageReport = async (req, res) => {
       success: true,
       data: {
         inventoryUsage: Object.values(inventoryUsage),
-        currentStock: currentStock,
+        currentStock,
         totalInventoryValue: currentStock.reduce((sum, s) => sum + s.value, 0),
         dateRange: {
           startDate: startDate || "all time",
@@ -498,11 +481,13 @@ exports.getInventoryUsageReport = async (req, res) => {
     });
   } catch (error) {
     console.error("Error getting inventory usage report:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error getting inventory usage report",
-      error: error.message,
-    });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Error getting inventory usage report",
+        error: error.message,
+      });
   }
 };
 
@@ -510,9 +495,7 @@ exports.getInventoryUsageReport = async (req, res) => {
 exports.getFinancialSummary = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
-
     const orderSummary = await Order.getFinancialSummary(startDate, endDate);
-
     const inventoryItems = await Inventory.find({ isActive: true });
     const inventoryValue = inventoryItems.reduce(
       (sum, item) => sum + item.remainingQuantity * item.unitPrice,
@@ -526,9 +509,7 @@ exports.getFinancialSummary = async (req, res) => {
       (sum, item) => sum + item.usedQuantity * item.unitPrice,
       0,
     );
-
     const topSelling = await Order.getTopSellingItems(10);
-
     const dateRange = {};
     if (startDate) dateRange.$gte = new Date(startDate);
     if (endDate) dateRange.$lte = new Date(endDate);
@@ -561,12 +542,12 @@ exports.getFinancialSummary = async (req, res) => {
           totalProfit: orderSummary.totalProfit,
           totalOrders: orderSummary.totalOrders,
           averageOrderValue: orderSummary.avgOrderValue,
-          inventoryValue: inventoryValue,
-          totalInventoryPurchased: totalInventoryPurchased,
-          totalInventoryUsed: totalInventoryUsed,
+          inventoryValue,
+          totalInventoryPurchased,
+          totalInventoryUsed,
         },
         topSellingItems: topSelling,
-        dailySales: dailySales,
+        dailySales,
         dateRange: {
           startDate: startDate || "all time",
           endDate: endDate || "present",
@@ -575,10 +556,12 @@ exports.getFinancialSummary = async (req, res) => {
     });
   } catch (error) {
     console.error("Error getting financial summary:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error getting financial summary",
-      error: error.message,
-    });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Error getting financial summary",
+        error: error.message,
+      });
   }
 };

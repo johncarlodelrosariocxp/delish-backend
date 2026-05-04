@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const menuController = require("../controllers/menuController");
-const { protect, admin } = require("../middlewares/authMiddleware"); // CHANGE: admin instead of adminOnly
+const { protect, admin } = require("../middlewares/authMiddleware");
 
 // Public routes (everyone can view menu)
 router.get("/", protect, menuController.getAllMenus);

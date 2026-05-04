@@ -14,7 +14,7 @@ const salesRoutes = require("./routes/salesRoute");
 const menuRoutes = require("./routes/menuRoutes");
 const expenseRoutes = require("./routes/expenseRoutes");
 const profitLossRoutes = require("./routes/profitLossRoutes");
-const inventoryRoutes = require("./routes/inventoryRoutes"); // ✅ ADD THIS LINE
+const inventoryRoutes = require("./routes/inventoryRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 8000;
@@ -26,6 +26,8 @@ connectDB();
 const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:5173",
+  "http://localhost:5174",
+  "http://localhost:5175",
   "https://delish-frontend-eight.vercel.app",
   "https://delish-final-pos.vercel.app",
   "https://final-delish-pos.vercel.app",
@@ -439,7 +441,7 @@ app.use("/api/expenses", expenseRoutes);
 app.use("/api/sales", salesRoutes);
 app.use("/api/menu", menuRoutes);
 app.use("/api/profit-loss", profitLossRoutes);
-app.use("/api/inventory", inventoryRoutes); // ✅ ADD THIS LINE
+app.use("/api/inventory", inventoryRoutes);
 
 // Global Error Handler
 app.use(globalErrorHandler);
@@ -457,6 +459,10 @@ app.use((req, res) => {
       "GET /api/user/me",
       "GET /api/inventory",
       "POST /api/inventory",
+      "PUT /api/inventory/:id/stock",
+      "GET /api/inventory/low-stock",
+      "GET /api/inventory/usage-report",
+      "GET /api/inventory/inventory-value",
       "GET /api/expenses",
       "POST /api/expenses",
       "GET /api/expenses/profit-loss",
@@ -485,6 +491,7 @@ const server = app.listen(PORT, () => {
   console.log(`   PUT  /api/inventory/:id/stock - Update stock`);
   console.log(`   GET  /api/inventory/low-stock - View low stock items`);
   console.log(`   GET  /api/inventory/usage-report - View usage report`);
+  console.log(`   GET  /api/inventory/inventory-value - View inventory value`);
   console.log(`=========================================\n`);
   console.log(`💰 EXPENSE & PROFIT TRACKING SYSTEM READY`);
   console.log(`   GET  /api/expenses - View all expenses`);
@@ -506,13 +513,19 @@ const server = app.listen(PORT, () => {
   console.log(`📋 MENU & ORDERS:`);
   console.log(`   GET  /api/menu - View menu items`);
   console.log(`   GET  /api/order - View orders`);
-  console.log(`   POST /api/order - Create new order`);
+  console.log(`   POST /api/order - Create new order (AUTO-DEDUCT INVENTORY)`);
   console.log(`=========================================\n`);
   console.log(`🔧 DEBUG ENDPOINTS:`);
   console.log(`   GET  /api/debug/expenses - Debug expenses`);
   console.log(`   GET  /api/debug/inventory - Debug inventory`);
   console.log(`   GET  /api/debug/profit-loss - Quick profit check`);
   console.log(`   GET  /api/debug/orders - Debug orders`);
+  console.log(`=========================================\n`);
+  console.log(`✅ INVENTORY DEDUCTION IS ACTIVE!`);
+  console.log(
+    `   When an order is placed, inventory stock will automatically decrease`,
+  );
+  console.log(`   based on the linked inventory requirements in menu items.`);
   console.log(`=========================================\n`);
 });
 

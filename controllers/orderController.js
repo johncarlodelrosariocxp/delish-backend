@@ -23,9 +23,8 @@ const addOrder = async (req, res, next) => {
       let costPerUnit = 0;
       let expenseId = null;
       let actualCost = 0;
-      let inventoryDeduction = null;
 
-      // First, try to find if this menu item has inventory requirements
+      // Find menu item by name
       const menuItem = await findMenuItemByName(item.name);
 
       if (
@@ -34,7 +33,6 @@ const addOrder = async (req, res, next) => {
         menuItem.inventoryRequirements &&
         menuItem.inventoryRequirements.length > 0
       ) {
-        // DEDUCT FROM INVENTORY
         console.log(
           `📦 Deducting inventory for: ${item.name} x${item.quantity}`,
         );
@@ -52,9 +50,7 @@ const addOrder = async (req, res, next) => {
 
           if (inventoryItem.remainingQuantity < requiredQty) {
             throw new Error(
-              `Insufficient ${inventoryItem.itemName} for ${item.name}. ` +
-                `Available: ${inventoryItem.remainingQuantity} ${inventoryItem.unit}, ` +
-                `Required: ${requiredQty} ${req.unit}`,
+              `Insufficient ${inventoryItem.itemName} for ${item.name}. Available: ${inventoryItem.remainingQuantity} ${inventoryItem.unit}, Required: ${requiredQty} ${req.unit}`,
             );
           }
 
@@ -64,13 +60,12 @@ const addOrder = async (req, res, next) => {
           );
           inventoryDeductions.push(deduction);
 
-          // Use inventory cost for pricing
           costPerUnit = inventoryItem.unitPrice;
           expenseId = inventoryItem._id;
           actualCost += deduction.totalCost;
         }
       } else {
-        // Fallback to Expense model (old system)
+        // Fallback to Expense model
         const expenseItem = await Expense.findOne({
           itemName: { $regex: new RegExp(`^${item.name}$`, "i") },
           isActive: true,
@@ -149,8 +144,12 @@ const addOrder = async (req, res, next) => {
 async function findMenuItemByName(itemName) {
   const menus = await Menu.find();
   for (const menu of menus) {
+    // Clean the item name by removing variant suffix
+    const cleanName = itemName.split("(")[0].trim().split("-")[0].trim();
     const item = menu.items.find(
-      (i) => i.name.toLowerCase() === itemName.toLowerCase(),
+      (i) =>
+        i.name.toLowerCase() === cleanName.toLowerCase() ||
+        i.name.toLowerCase() === itemName.toLowerCase(),
     );
     if (item) {
       return { ...item.toObject(), menuId: menu.id };
@@ -290,17 +289,14 @@ const deleteOrder = async (req, res, next) => {
     // RESTORE INVENTORY that was deducted
     for (const item of order.items) {
       if (item.expenseId && item.costPerUnit > 0) {
-        // Try to restore to Inventory first
         const inventoryItem = await Inventory.findById(item.expenseId);
         if (inventoryItem) {
-          // Restore inventory stock
           inventoryItem.usedQuantity -= item.quantity;
           inventoryItem.remainingQuantity =
             inventoryItem.quantity - inventoryItem.usedQuantity;
           await inventoryItem.save();
           console.log(`✅ Restored ${item.quantity} ${item.name} to inventory`);
         } else {
-          // Fallback to Expense model
           const expenseItem = await Expense.findById(item.expenseId);
           if (expenseItem) {
             expenseItem.usedQuantity -= item.quantity;
@@ -403,29 +399,17 @@ const getOrderStats = async (req, res, next) => {
 
     const statusStats = await Order.aggregate([
       { $match: matchQuery },
-      {
-        $group: {
-          _id: "$orderStatus",
-          count: { $sum: 1 },
-        },
-      },
+      { $group: { _id: "$orderStatus", count: { $sum: 1 } } },
     ]);
 
     const last30Days = new Date();
     last30Days.setDate(last30Days.getDate() - 30);
 
     const dailySales = await Order.aggregate([
-      {
-        $match: {
-          ...matchQuery,
-          createdAt: { $gte: last30Days },
-        },
-      },
+      { $match: { ...matchQuery, createdAt: { $gte: last30Days } } },
       {
         $group: {
-          _id: {
-            $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
-          },
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
           totalSales: { $sum: "$totalAmount" },
           orderCount: { $sum: 1 },
         },
@@ -440,7 +424,7 @@ const getOrderStats = async (req, res, next) => {
         todayOrders,
         ...stats,
         statusDistribution: statusStats,
-        dailySales: dailySales,
+        dailySales,
       },
     });
   } catch (error) {
@@ -599,7 +583,6 @@ const getAllSalesStats = async (req, res, next) => {
         : weekOrders > 0
           ? 100
           : 0;
-
     const revenueWeekPercentage =
       lastWeekRevenue.length > 0 && lastWeekRevenue[0].total > 0
         ? Math.round(
