@@ -5,6 +5,11 @@ const { protect, admin } = require("../middlewares/authMiddleware");
 
 // Routes
 router.get("/", protect, inventoryController.getInventory);
+router.get(
+  "/transaction-report",
+  protect,
+  inventoryController.getInventoryTransactionReport,
+);
 router.get("/low-stock", protect, inventoryController.getLowStock);
 router.get(
   "/usage-report",

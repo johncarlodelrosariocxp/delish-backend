@@ -1,5 +1,54 @@
 const mongoose = require("mongoose");
 
+const inventoryTransactionSchema = new mongoose.Schema(
+  {
+    type: {
+      type: String,
+      enum: ["add", "remove", "create", "update"],
+      required: true,
+    },
+    quantity: {
+      type: Number,
+      required: true,
+    },
+    previousQuantity: {
+      type: Number,
+      required: true,
+    },
+    newQuantity: {
+      type: Number,
+      required: true,
+    },
+    previousRemaining: {
+      type: Number,
+      required: true,
+    },
+    newRemaining: {
+      type: Number,
+      required: true,
+    },
+    reason: {
+      type: String,
+      default: "",
+    },
+    performedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    performedByName: {
+      type: String,
+      default: "System",
+    },
+    timestamp: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  {
+    timestamps: true,
+  },
+);
+
 const inventorySchema = new mongoose.Schema(
   {
     itemName: {
@@ -79,7 +128,6 @@ const inventorySchema = new mongoose.Schema(
       type: String,
       default: "",
     },
-    // NEW: Link to menu items that use this inventory item
     linkedMenuItems: [
       {
         menuItemId: {
@@ -96,6 +144,7 @@ const inventorySchema = new mongoose.Schema(
         },
       },
     ],
+    transactions: [inventoryTransactionSchema],
     isActive: {
       type: Boolean,
       default: true,
@@ -115,19 +164,66 @@ inventorySchema.pre("save", function (next) {
   next();
 });
 
+// Method to add transaction
+inventorySchema.methods.addTransaction = async function (
+  type,
+  quantity,
+  previousQuantity,
+  newQuantity,
+  previousRemaining,
+  newRemaining,
+  reason = "",
+  userId = null,
+  userName = "System",
+) {
+  this.transactions.push({
+    type,
+    quantity,
+    previousQuantity,
+    newQuantity,
+    previousRemaining,
+    newRemaining,
+    reason,
+    performedBy: userId,
+    performedByName: userName,
+    timestamp: new Date(),
+  });
+  await this.save();
+};
+
 // Method to use stock for a menu item
 inventorySchema.methods.useStock = async function (
   quantity,
   menuItemName = null,
+  userId = null,
+  userName = "System",
 ) {
   if (this.remainingQuantity < quantity) {
     throw new Error(
       `Insufficient stock for ${this.itemName}. Available: ${this.remainingQuantity}, Required: ${quantity}`,
     );
   }
+
+  const previousQuantity = this.quantity;
+  const previousRemaining = this.remainingQuantity;
+
   this.usedQuantity += quantity;
   this.remainingQuantity = this.quantity - this.usedQuantity;
+
+  await this.addTransaction(
+    "remove",
+    quantity,
+    previousQuantity,
+    this.quantity,
+    previousRemaining,
+    this.remainingQuantity,
+    `Used for ${menuItemName || "menu item"}`,
+    userId,
+    userName,
+  );
+
   await this.save();
+
   return {
     itemName: this.itemName,
     quantityUsed: quantity,
@@ -146,7 +242,7 @@ inventorySchema.methods.canFulfillMenuItem = function (
   const linkedItem = this.linkedMenuItems.find(
     (item) => item.menuItemId === menuItemId,
   );
-  if (!linkedItem) return true; // Not linked, no restriction
+  if (!linkedItem) return true;
   const requiredQuantity = linkedItem.quantityPerUnit * quantity;
   return this.remainingQuantity >= requiredQuantity;
 };
