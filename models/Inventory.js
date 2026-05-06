@@ -1,3 +1,4 @@
+// models/Inventory.js - Add sku field to the schema
 const mongoose = require("mongoose");
 
 const inventoryTransactionSchema = new mongoose.Schema(
@@ -51,6 +52,15 @@ const inventoryTransactionSchema = new mongoose.Schema(
 
 const inventorySchema = new mongoose.Schema(
   {
+    // ADD THIS SKU FIELD TO FIX THE ERROR
+    sku: {
+      type: String,
+      unique: true,
+      sparse: true, // This allows multiple null/undefined values
+      trim: true,
+      uppercase: true,
+      index: true,
+    },
     itemName: {
       type: String,
       required: [true, "Item name is required"],
@@ -161,6 +171,20 @@ inventorySchema.pre("save", function (next) {
     this.totalCost = this.quantity * this.unitPrice;
   }
   this.remainingQuantity = this.quantity - this.usedQuantity;
+
+  // Auto-generate SKU if not provided
+  if (!this.sku) {
+    const prefix = this.itemName
+      .replace(/[^a-zA-Z]/g, "")
+      .substring(0, 3)
+      .toUpperCase();
+    const randomNum = Math.floor(Math.random() * 10000)
+      .toString()
+      .padStart(4, "0");
+    const timestamp = Date.now().toString().slice(-4);
+    this.sku = `${prefix}${randomNum}${timestamp}`;
+  }
+
   next();
 });
 
