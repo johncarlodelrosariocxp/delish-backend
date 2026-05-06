@@ -110,13 +110,13 @@ const inventorySchema = new mongoose.Schema(
     },
     unitPrice: {
       type: Number,
-      required: true,
+      // REMOVED required - now optional
       min: 0,
       default: 0,
     },
     totalCost: {
       type: Number,
-      required: true,
+      // REMOVED required - now optional
       min: 0,
       default: 0,
     },
@@ -167,8 +167,10 @@ const inventorySchema = new mongoose.Schema(
 
 // Auto-calculate totalCost and remainingQuantity before saving
 inventorySchema.pre("save", function (next) {
-  if (this.quantity && this.unitPrice) {
+  if (this.quantity && this.unitPrice && this.unitPrice > 0) {
     this.totalCost = this.quantity * this.unitPrice;
+  } else {
+    this.totalCost = 0;
   }
   this.remainingQuantity = this.quantity - this.usedQuantity;
 

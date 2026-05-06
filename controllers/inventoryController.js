@@ -307,12 +307,6 @@ exports.createInventory = async (req, res) => {
         .json({ success: false, message: "Quantity must be greater than 0" });
     }
 
-    if (!unitPrice || unitPrice <= 0) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Unit price must be greater than 0" });
-    }
-
     const existingItem = await Inventory.findOne({
       itemName: { $regex: new RegExp(`^${itemName.trim()}$`, "i") },
       isActive: true,
