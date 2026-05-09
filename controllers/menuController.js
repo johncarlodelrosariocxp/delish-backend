@@ -418,20 +418,37 @@ exports.getMenuItem = async (req, res) => {
   }
 };
 
-// Add item to menu
+// FIXED: Add item to menu
 exports.addMenuItem = async (req, res) => {
   try {
-    const menu = await Menu.findOne({ id: parseInt(req.params.menuId) });
+    const menuId = parseInt(req.params.menuId);
+    console.log("Adding item to menu ID:", menuId);
+
+    const menu = await Menu.findOne({ id: menuId });
 
     if (!menu) {
+      console.log("Menu not found with ID:", menuId);
       return res.status(404).json({
         success: false,
-        message: "Menu not found",
+        message: `Menu with ID ${menuId} not found`,
       });
     }
 
     const newItem = req.body;
+    console.log("Received item data:", JSON.stringify(newItem, null, 2));
 
+    // Generate an ID if not provided
+    if (!newItem.id) {
+      // Find the highest existing ID in this menu
+      const maxId =
+        menu.items.length > 0
+          ? Math.max(...menu.items.map((item) => item.id || 0))
+          : 0;
+      newItem.id = maxId + 1;
+      console.log("Generated new item ID:", newItem.id);
+    }
+
+    // Check if item with same ID already exists
     const existingItem = menu.items.find((item) => item.id === newItem.id);
     if (existingItem) {
       return res.status(400).json({
@@ -440,29 +457,58 @@ exports.addMenuItem = async (req, res) => {
       });
     }
 
-    // If item has inventory requirements, validate them
-    if (newItem.trackInventory && newItem.inventoryRequirements) {
-      for (const req of newItem.inventoryRequirements) {
-        const invItem = await Inventory.findById(req.inventoryItemId);
-        if (!invItem) {
-          return res.status(400).json({
-            success: false,
-            message: `Inventory item ${req.inventoryItemName} not found`,
-          });
-        }
-        req.inventoryItemName = invItem.itemName;
-        req.unit = invItem.unit;
-      }
+    // Set default values for required fields if missing
+    if (!newItem.name) {
+      return res.status(400).json({
+        success: false,
+        message: "Item name is required",
+      });
+    }
 
-      // Calculate total ingredient cost
+    if (!newItem.category) {
+      newItem.category = "general";
+    }
+
+    if (!newItem.tag) {
+      newItem.tag = "food";
+    }
+
+    if (!newItem.variants || newItem.variants.length === 0) {
+      newItem.variants = [{ label: "Regular", price: newItem.price || 0 }];
+    }
+
+    if (newItem.hasFlavorSelection === undefined) {
+      newItem.hasFlavorSelection = false;
+    }
+
+    if (newItem.trackInventory === undefined) {
+      newItem.trackInventory = false;
+    }
+
+    if (!newItem.inventoryRequirements) {
+      newItem.inventoryRequirements = [];
+    }
+
+    // If item has inventory requirements, validate them
+    if (newItem.trackInventory && newItem.inventoryRequirements.length > 0) {
       let totalCost = 0;
       for (const req of newItem.inventoryRequirements) {
-        const invItem = await Inventory.findById(req.inventoryItemId);
-        if (invItem) {
+        if (req.inventoryItemId) {
+          const invItem = await Inventory.findById(req.inventoryItemId);
+          if (!invItem) {
+            return res.status(400).json({
+              success: false,
+              message: `Inventory item with ID ${req.inventoryItemId} not found`,
+            });
+          }
+          req.inventoryItemName = invItem.itemName;
+          req.unit = invItem.unit;
           totalCost += req.quantityPerServing * invItem.unitPrice;
         }
       }
       newItem.totalIngredientCost = totalCost;
+    } else {
+      newItem.totalIngredientCost = 0;
     }
 
     menu.items.push(newItem);
@@ -471,23 +517,27 @@ exports.addMenuItem = async (req, res) => {
     // Also update inventory items to link back to this menu item
     if (newItem.trackInventory && newItem.inventoryRequirements) {
       for (const req of newItem.inventoryRequirements) {
-        const invItem = await Inventory.findById(req.inventoryItemId);
-        if (invItem) {
-          const existingLink = invItem.linkedMenuItems.find(
-            (link) => link.menuItemId === newItem.id,
-          );
-          if (!existingLink) {
-            invItem.linkedMenuItems.push({
-              menuItemId: newItem.id,
-              menuItemName: newItem.name,
-              quantityPerUnit: req.quantityPerServing,
-            });
-            await invItem.save();
+        if (req.inventoryItemId) {
+          const invItem = await Inventory.findById(req.inventoryItemId);
+          if (invItem) {
+            const existingLink = invItem.linkedMenuItems?.find(
+              (link) => link.menuItemId === newItem.id,
+            );
+            if (!existingLink) {
+              if (!invItem.linkedMenuItems) invItem.linkedMenuItems = [];
+              invItem.linkedMenuItems.push({
+                menuItemId: newItem.id,
+                menuItemName: newItem.name,
+                quantityPerUnit: req.quantityPerServing,
+              });
+              await invItem.save();
+            }
           }
         }
       }
     }
 
+    console.log("Item added successfully:", newItem.name);
     res.status(201).json({
       success: true,
       message: "Item added successfully",
@@ -499,6 +549,7 @@ exports.addMenuItem = async (req, res) => {
       success: false,
       message: "Failed to add menu item",
       error: error.message,
+      stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
     });
   }
 };
@@ -623,7 +674,7 @@ exports.deleteMenuItem = async (req, res) => {
     ) {
       for (const req of deletedItem.inventoryRequirements) {
         const invItem = await Inventory.findById(req.inventoryItemId);
-        if (invItem) {
+        if (invItem && invItem.linkedMenuItems) {
           invItem.linkedMenuItems = invItem.linkedMenuItems.filter(
             (link) => link.menuItemId !== deletedItem.id,
           );
